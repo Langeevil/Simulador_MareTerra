@@ -23,15 +23,15 @@ SAIDA_COLUNAS = [
     "Quantidade de Peixes",
     "Peso Medio (g)",
     "Biomassa (kg)",
-    "Consumo de Racao na Semana (kg)",
+    "Consumo de Racao Diario (kg)",
     "Consumo de Racao Acumulado (kg)",
-    "TCA da Semana",
+    "TCA Diario",
     "TCA Acumulado",
-    "GDP Medio da Semana (g/dia)",
-    "GDP Medio Acumulado (g/dia)",
-    "Mortalidade da Semana (%)",
-    "Mortalidade Acumulada (%)",
-    "Sobrevivencia da Semana (%)",
+    "GDP Diario (g/dia)",
+    "GDP Acumulado (g)",
+    "Mortalidade Diaria (peixes)",
+    "Mortalidade Acumulada (peixes)",
+    "Sobrevivencia Diaria (%)",
     "Sobrevivencia Acumulada (%)",
     "Status",
     "Regiao",
@@ -243,14 +243,10 @@ def normalizar_estacao(valor: object) -> str:
     return texto[:1].upper()
 
 
-def definir_status(peso_medio_g: float) -> str:
-    if peso_medio_g < 30:
-        return "Alevinagem"
-    if peso_medio_g < 120:
-        return "Class 1 \u2014 Recria"
-    if peso_medio_g < PESO_DESPESCA_G:
-        return "Class 2 \u2014 Engorda"
-    return "Despescado"
+def definir_status_base(peso_medio_g: float) -> str:
+    if peso_medio_g >= PESO_DESPESCA_G:
+        return "Peixe pronto"
+    return ""
 
 
 def carregar_csv(caminho: Path) -> CsvTable:
@@ -463,17 +459,22 @@ def adicionar_registro(
     q_atual: float,
     pm_atual: float,
     bm_atual: float,
-    cr_semana: float,
+    cr_diario: float,
     cr_acumulado: float,
-    tca_semana: float,
+    tca_diario: float,
     tca_acumulado: float,
-    gdp_semana: float,
-    gdp_acumulado_dia: float,
-    mort_semana_pct: float,
-    mort_acumulada_pct: float,
+    gdp_diario: float,
+    gdp_acumulado: float,
+    mort_diaria_abs: float,
+    mort_acumulada_abs: float,
+    status: str,
 ) -> None:
-    sobrev_semana_pct = max(100.0 - mort_semana_pct, 0.0)
-    sobrev_acumulada_pct = max(100.0 - mort_acumulada_pct, 0.0)
+    # Sobrevivencia %
+    # Sobrevivencia Acumulada (%) = (Qtd Atual / Qtd Inicial) * 100
+    sobrev_acumulada_pct = (q_atual / lote.quantidade) * 100.0 if lote.quantidade > 0 else 0.0
+    # Sobrevivencia Diaria (%) = 100 - (Mortos Dia / Qtd Antes Mortos) * 100
+    mort_taxa_dia = (mort_diaria_abs / (q_atual + mort_diaria_abs)) * 100.0 if (q_atual + mort_diaria_abs) > 0 else 0.0
+    sobrev_diaria_pct = 100.0 - mort_taxa_dia
     
     registros.append(
         {
@@ -484,17 +485,17 @@ def adicionar_registro(
             "Quantidade de Peixes": q_atual,
             "Peso Medio (g)": pm_atual,
             "Biomassa (kg)": bm_atual,
-            "Consumo de Racao na Semana (kg)": cr_semana,
+            "Consumo de Racao Diario (kg)": cr_diario,
             "Consumo de Racao Acumulado (kg)": cr_acumulado,
-            "TCA da Semana": tca_semana,
+            "TCA Diario": tca_diario,
             "TCA Acumulado": tca_acumulado,
-            "GDP Medio da Semana (g/dia)": gdp_semana,
-            "GDP Medio Acumulado (g/dia)": gdp_acumulado_dia,
-            "Mortalidade da Semana (%)": mort_semana_pct,
-            "Mortalidade Acumulada (%)": mort_acumulada_pct,
-            "Sobrevivencia da Semana (%)": sobrev_semana_pct,
+            "GDP Diario (g/dia)": gdp_diario,
+            "GDP Acumulado (g)": gdp_acumulado,
+            "Mortalidade Diaria (peixes)": mort_diaria_abs,
+            "Mortalidade Acumulada (peixes)": mort_acumulada_abs,
+            "Sobrevivencia Diaria (%)": sobrev_diaria_pct,
             "Sobrevivencia Acumulada (%)": sobrev_acumulada_pct,
-            "Status": definir_status(pm_atual),
+            "Status": status,
             "Regiao": lote.regiao,
             "Classe": lote.classe,
             "Tanques Liberados": "",
@@ -511,99 +512,142 @@ def simular_lote(lote: Lote, curvas: list[Curva], limite_dias: int = LIMITE_DIAS
     estacao_inicial = detectar_estacao(data_inicial)
     dia_ciclo_start = determinar_dia_ciclo(lote.peso_medio_g, curvas, estacao_inicial)
     
+    # Fatores regionais
+    regiao_norm = normalizar_nome(lote.regiao)
+    fator_regional = 1.0
+    if "itapora" in regiao_norm:
+        fator_regional = 0.80
+    elif "parana" in regiao_norm:
+        fator_regional = 0.85
+    elif "aparecida" in regiao_norm:
+        fator_regional = 1.0
+
     q = lote.quantidade
     pm = lote.peso_medio_g
+    pm_real = lote.peso_medio_g
     pi = lote.peso_medio_g
     qi = lote.quantidade
+    bm_inicial = (qi * pi) / 1000.0
     
     ca_kg = 0.0
-    sem = 1
-    ds = 0
-    cs_kg = 0.0
-    gs = 0.0
-    mort_sem = 0.0
+    mort_acumulada_abs = 0.0
     
     dc = dia_ciclo_start
     data = data_inicial
     registros: list[dict[str, object]] = []
+    history_eval = []
 
-    while pm < PESO_DESPESCA_G and len(registros) < limite_dias:
+    hoje = date.today()
+
+    while ((data < hoje and pm_real < PESO_DESPESCA_G) or (data >= hoje and pm < PESO_DESPESCA_G)) and (data - data_inicial).days < limite_dias:
         es = detectar_estacao(data)
         curva = linha_curva(curvas, es, dc)
         
-        # Logica do notebook:
-        # mort_dia = p['mortalidade'] / 100.0
-        # q -= q * mort_dia
-        # mort_sem += mort_dia * 100
+        pm_anterior = pm
+        bm_anterior = (q * pm_anterior) / 1000.0
+
+        # Mortalidade Diaria
         mort_dia_rate = float(curva["mortalidade_pct"]) / 100.0
-        q = max(q - (q * mort_dia_rate), 0.0)
-        mort_sem += (mort_dia_rate * 100.0)
+        mortos_dia = q * mort_dia_rate
+        q = max(q - mortos_dia, 0.0)
+        mort_acumulada_abs += mortos_dia
         
-        # pm += p['gdp']; gs += p['gdp']
-        gdp_dia = float(curva["gdp_g"])
+        # Ganho de Peso Diario Base
+        gdp_base = float(curva["gdp_g"]) * fator_regional
+        
+        pm_real += gdp_base
+        
+        # Penalidade Historica
+        if data < hoje:
+            gdp_dia = gdp_base * 0.84
+        else:
+            gdp_dia = gdp_base
         pm += gdp_dia
-        gs += gdp_dia
         
-        # racao_dia_kg = (p['racao_und_g'] * q) / 1000.0
-        # cs_kg += racao_dia_kg; ca_kg += racao_dia_kg
-        racao_dia_kg = (float(curva["racao_und_g"]) * q) / 1000.0
-        cs_kg += racao_dia_kg
-        ca_kg += racao_dia_kg
-        
-        # bm = (q * pm) / 1000
         bm = (q * pm) / 1000.0
         
-        ds += 1
+        pv_rate = (float(curva["pv"]) / 100.0) * fator_regional
+        racao_dia_kg = bm * pv_rate
+        ca_kg += racao_dia_kg
         
-        # tca_s = cs_kg / gs if ds == 7 and gs > 0 else 0
-        # gdp_s = gs / 7 if ds == 7 else 0
-        tca_s = cs_kg / gs if ds == 7 and gs > 0 else 0.0
-        gdp_s = gs / 7.0 if ds == 7 else 0.0
+        ganho_bm_dia = bm - bm_anterior
+        tca_diario = racao_dia_kg / ganho_bm_dia if ganho_bm_dia > 0 else 0.0
         
-        # Acumulados
-        # dt_lote = dc - dia_ciclo(pi, curvas)
-        # gdp_ac = (pm - pi) / dt_lote
-        # gkg = (pm - pi) * q / 1000
-        # tca_ac = ca_kg / gkg
-        dias_decorridos = len(registros) + 1
-        gdp_ac = (pm - pi) / dias_decorridos if dias_decorridos > 0 else 0.0
-        gkg = (pm - pi) * q / 1000.0
-        tca_ac = ca_kg / gkg if gkg > 0 else 0.0
+        ganho_bm_total = bm - bm_inicial
+        tca_ac = ca_kg / ganho_bm_total if ganho_bm_total > 0 else 0.0
         
-        mort_ac = (1.0 - q / qi) * 100.0 if qi > 0 else 0.0
+        # Status
+        pm_eval = pm_real if data < hoje else pm
+        history_eval.append((data, pm_eval))
+
+        dias_totais_simulados = (data - data_inicial).days + 1
+        semana_num = ((dias_totais_simulados - 1) // 7) + 1
         
         adicionar_registro(
             registros,
             lote,
             data,
-            sem,
+            semana_num,
             q,
             pm,
             bm,
-            cs_kg,
+            racao_dia_kg,
             ca_kg,
-            tca_s,
+            tca_diario,
             tca_ac,
-            gdp_s,
-            gdp_ac,
-            mort_sem,
-            mort_ac,
+            gdp_dia,
+            pm - pi,
+            mortos_dia,
+            mort_acumulada_abs,
+            ""
         )
         
-        if ds == 7:
-            sem += 1
-            ds = 0
-            cs_kg = 0.0
-            gs = 0.0
-            mort_sem = 0.0
-            
         dc += 1
         data += timedelta(days=1)
 
-    if registros:
-        registros[-1]["Status"] = "Despescado"
+    # Pos-processamento exato de marcadores
+    data_class1 = None
+    data_class2 = None
+    data_pronto = None
+    
+    if any(p >= 30.0 for d, p in history_eval) and pi <= 30.0:
+        rec_antes, rec_depois = None, None
+        for d, p in history_eval:
+            if p <= 30.0: rec_antes = (d, p)
+            if p >= 30.0 and rec_depois is None:
+                rec_depois = (d, p)
+                break
+        if rec_antes and rec_depois:
+            if (30.0 - rec_antes[1]) < (rec_depois[1] - 30.0):
+                data_class1 = rec_antes[0]
+            else:
+                data_class1 = rec_depois[0]
 
-    return registros
+    if any(p >= 120.0 for d, p in history_eval) and pi <= 120.0:
+        rec_antes, rec_depois = None, None
+        for d, p in history_eval:
+            if p <= 120.0: rec_antes = (d, p)
+            if p >= 120.0 and rec_depois is None:
+                rec_depois = (d, p)
+                break
+        if rec_antes and rec_depois:
+            if (120.0 - rec_antes[1]) < (rec_depois[1] - 120.0):
+                data_class2 = rec_antes[0]
+            else:
+                data_class2 = rec_depois[0]
+
+    for d, p in history_eval:
+        if p >= PESO_DESPESCA_G:
+            data_pronto = d
+            break
+            
+    for r in registros:
+        d = r["Data"]
+        if d == data_class1: r["Status"] = "Class 1"
+        if d == data_class2: r["Status"] = "Class 2"
+        if d == data_pronto: r["Status"] = "Peixe pronto"
+
+    return [r for r in registros if r["Data"] >= hoje or r["Status"] != ""]
 
 
 def simular_todos_lotes(
@@ -656,15 +700,15 @@ def formatar_relatorio(registros: list[dict]) -> list[dict[str, object]]:
     casas_decimais = {
         "Peso Medio (g)": 2,
         "Biomassa (kg)": 2,
-        "Consumo de Racao na Semana (kg)": 2,
+        "Consumo de Racao Diario (kg)": 2,
         "Consumo de Racao Acumulado (kg)": 4,
-        "TCA da Semana": 4,
+        "TCA Diario": 4,
         "TCA Acumulado": 4,
-        "GDP Medio da Semana (g/dia)": 4,
-        "GDP Medio Acumulado (g/dia)": 4,
-        "Mortalidade da Semana (%)": 2,
-        "Mortalidade Acumulada (%)": 2,
-        "Sobrevivencia da Semana (%)": 2,
+        "GDP Diario (g/dia)": 4,
+        "GDP Acumulado (g)": 4,
+        "Mortalidade Diaria (peixes)": 2,
+        "Mortalidade Acumulada (peixes)": 2,
+        "Sobrevivencia Diaria (%)": 2,
         "Sobrevivencia Acumulada (%)": 2,
     }
     colunas_inteiras = {"Semana", "Quantidade de Peixes"}
