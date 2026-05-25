@@ -124,6 +124,13 @@ ALIASES_CURVAS = {
         "arraçoamento",
         "arrazoamento",
     ],
+    "racao_und": [
+        "qtd racao und",
+        "racao und",
+        "racao/peixe",
+        "consumo peixe",
+        "qtd racao",
+    ],
 }
 
 
@@ -196,7 +203,6 @@ def parse_numero_br(valor: object) -> float:
     if not texto or texto.lower() in {"nan", "none", "null", "-"}:
         return math.nan
 
-    percentual = "%" in texto
     texto = texto.replace("%", "").replace(" ", "")
     if "," in texto:
         texto = texto.replace(".", "").replace(",", ".")
@@ -204,10 +210,9 @@ def parse_numero_br(valor: object) -> float:
         texto = texto.replace(",", ".")
 
     try:
-        numero = float(texto)
+        return float(texto)
     except ValueError:
         return math.nan
-    return numero / 100.0 if percentual else numero
 
 
 def parse_data_br(valor: object) -> date:
@@ -275,6 +280,7 @@ def preparar_curvas(tabela: CsvTable) -> list[Curva]:
         tabela.headers, ALIASES_CURVAS["mortalidade_pct"], contexto="curvas.csv"
     )
     col_pv = encontrar_coluna(tabela.headers, ALIASES_CURVAS["pv_pct"], contexto="curvas.csv")
+    col_racao = encontrar_coluna(tabela.headers, ALIASES_CURVAS["racao_und"], contexto="curvas.csv")
 
     curvas: list[Curva] = []
     for row in tabela.rows:
@@ -283,8 +289,9 @@ def preparar_curvas(tabela: CsvTable) -> list[Curva]:
         gdp = parse_numero_br(row[col_gdp])
         mortalidade = parse_numero_br(row[col_mort])
         pv = parse_numero_br(row[col_pv])
+        racao_und = parse_numero_br(row[col_racao])
 
-        if any(math.isnan(v) for v in [dia, peso, gdp, mortalidade, pv]):
+        if any(math.isnan(v) for v in [dia, peso, gdp, mortalidade, pv, racao_und]):
             continue
 
         curvas.append(
@@ -295,16 +302,12 @@ def preparar_curvas(tabela: CsvTable) -> list[Curva]:
                 "gdp_g": gdp,
                 "mortalidade_pct": mortalidade,
                 "pv": pv,
+                "racao_und_g": racao_und,
             }
         )
 
     if not curvas:
         raise ValueError("curvas.csv nao possui linhas validas apos a normalizacao.")
-
-    # PV pode vir como fracao (0,025) ou percentual (2,5). Normaliza para fracao.
-    if max(float(c["pv"]) for c in curvas) > 1:
-        for curva in curvas:
-            curva["pv"] = float(curva["pv"]) / 100.0
 
     return sorted(curvas, key=lambda c: (str(c["estacao"]), int(c["dia"])))
 
@@ -317,6 +320,7 @@ def preparar_curvas_largas(tabela: CsvTable) -> list[Curva]:
             "pv": ["pv verao"],
             "mort": ["mortalidade verao", "mortalidade pct verao"],
             "gdp": ["gdp verao"],
+            "racao": ["qtd racao und verao", "racao und verao"],
         },
         "I": {
             "dia": ["dia inverno"],
@@ -324,6 +328,7 @@ def preparar_curvas_largas(tabela: CsvTable) -> list[Curva]:
             "pv": ["pv inverno"],
             "mort": ["mortalidade inverno", "mortalidade pct inverno"],
             "gdp": ["gdp inverno"],
+            "racao": ["qtd racao und inverno", "racao und inverno"],
         },
     }
 
@@ -334,7 +339,8 @@ def preparar_curvas_largas(tabela: CsvTable) -> list[Curva]:
         col_pv = encontrar_coluna(tabela.headers, aliases["pv"], obrigatoria=False)
         col_mort = encontrar_coluna(tabela.headers, aliases["mort"], obrigatoria=False)
         col_gdp = encontrar_coluna(tabela.headers, aliases["gdp"], obrigatoria=False)
-        if not all([col_dia, col_peso, col_pv, col_mort, col_gdp]):
+        col_racao = encontrar_coluna(tabela.headers, aliases["racao"], obrigatoria=False)
+        if not all([col_dia, col_peso, col_pv, col_mort, col_gdp, col_racao]):
             continue
 
         for row in tabela.rows:
@@ -343,7 +349,8 @@ def preparar_curvas_largas(tabela: CsvTable) -> list[Curva]:
             pv = parse_numero_br(row[col_pv])
             mortalidade = parse_numero_br(row[col_mort])
             gdp = parse_numero_br(row[col_gdp])
-            if any(math.isnan(v) for v in [dia, peso, pv, mortalidade, gdp]):
+            racao_und = parse_numero_br(row[col_racao])
+            if any(math.isnan(v) for v in [dia, peso, pv, mortalidade, gdp, racao_und]):
                 continue
             curvas.append(
                 {
@@ -353,6 +360,7 @@ def preparar_curvas_largas(tabela: CsvTable) -> list[Curva]:
                     "gdp_g": gdp,
                     "mortalidade_pct": mortalidade,
                     "pv": pv,
+                    "racao_und_g": racao_und,
                 }
             )
 
@@ -433,9 +441,9 @@ def lote_da_linha(
     )
 
 
-def determinar_dia_ciclo(peso_medio_g: float, curvas: list[Curva], estacao: str) -> int:
-    subset = [c for c in curvas if c["estacao"] == estacao] or curvas
-    curva = min(subset, key=lambda c: abs(float(c["peso_ref_g"]) - peso_medio_g))
+def determinar_dia_ciclo(peso_medio_g: float, curvas: list[Curva], estacao_atual: str) -> int:
+    # A logica do notebook busca o peso mais proximo em AMBAS as estacoes para definir o dia inicial
+    curva = min(curvas, key=lambda c: abs(float(c["peso_ref_g"]) - peso_medio_g))
     return int(curva["dia"])
 
 
@@ -460,13 +468,13 @@ def adicionar_registro(
     tca_semana: float,
     tca_acumulado: float,
     gdp_semana: float,
-    gdp_acumulado: float,
-    mortalidade_semana_pct: float,
-    mortos_acumulado: float,
+    gdp_acumulado_dia: float,
+    mort_semana_pct: float,
+    mort_acumulada_pct: float,
 ) -> None:
-    mortalidade_acumulada_pct = (
-        mortos_acumulado / lote.quantidade * 100.0 if lote.quantidade > 0 else 0.0
-    )
+    sobrev_semana_pct = max(100.0 - mort_semana_pct, 0.0)
+    sobrev_acumulada_pct = max(100.0 - mort_acumulada_pct, 0.0)
+    
     registros.append(
         {
             "Produtor": lote.produtor,
@@ -481,11 +489,11 @@ def adicionar_registro(
             "TCA da Semana": tca_semana,
             "TCA Acumulado": tca_acumulado,
             "GDP Medio da Semana (g/dia)": gdp_semana,
-            "GDP Medio Acumulado (g/dia)": gdp_acumulado,
-            "Mortalidade da Semana (%)": mortalidade_semana_pct,
-            "Mortalidade Acumulada (%)": mortalidade_acumulada_pct,
-            "Sobrevivencia da Semana (%)": max(100.0 - mortalidade_semana_pct, 0.0),
-            "Sobrevivencia Acumulada (%)": max(100.0 - mortalidade_acumulada_pct, 0.0),
+            "GDP Medio Acumulado (g/dia)": gdp_acumulado_dia,
+            "Mortalidade da Semana (%)": mort_semana_pct,
+            "Mortalidade Acumulada (%)": mort_acumulada_pct,
+            "Sobrevivencia da Semana (%)": sobrev_semana_pct,
+            "Sobrevivencia Acumulada (%)": sobrev_acumulada_pct,
             "Status": definir_status(pm_atual),
             "Regiao": lote.regiao,
             "Classe": lote.classe,
@@ -499,93 +507,101 @@ def simular_lote(lote: Lote, curvas: list[Curva], limite_dias: int = LIMITE_DIAS
     if lote.quantidade <= 0 or not (0 < lote.peso_medio_g < PESO_DESPESCA_G):
         return []
 
-    estacao_inicial = detectar_estacao(lote.data_alojamento)
-    dia_ciclo = determinar_dia_ciclo(lote.peso_medio_g, curvas, estacao_inicial)
-
-    q_atual = lote.quantidade
-    pm_atual = lote.peso_medio_g
-    bm_inicial = q_atual * pm_atual / 1000.0
     data_inicial = lote.data_alojamento
-
-    cr_acumulado = 0.0
-    mortos_acumulado = 0.0
-    gdp_total = 0.0
-    dias_total = 0
-
-    cr_semana = 0.0
-    gdp_total_semana = 0.0
-    dias_semana = 0
-    bm_inicio_semana = bm_inicial
-    q_inicio_semana = q_atual
-    mortos_semana = 0.0
-
+    estacao_inicial = detectar_estacao(data_inicial)
+    dia_ciclo_start = determinar_dia_ciclo(lote.peso_medio_g, curvas, estacao_inicial)
+    
+    q = lote.quantidade
+    pm = lote.peso_medio_g
+    pi = lote.peso_medio_g
+    qi = lote.quantidade
+    
+    ca_kg = 0.0
+    sem = 1
+    ds = 0
+    cs_kg = 0.0
+    gs = 0.0
+    mort_sem = 0.0
+    
+    dc = dia_ciclo_start
+    data = data_inicial
     registros: list[dict[str, object]] = []
 
-    for dia_simulado in range(1, limite_dias + 1):
-        data_atual = data_inicial + timedelta(days=dia_simulado - 1)
-        semana = dia_simulado // 7 + 1
-        estacao = detectar_estacao(data_atual)
-        curva = linha_curva(curvas, estacao, dia_ciclo)
-
-        mortos_dia = q_atual * (float(curva["mortalidade_pct"]) / 100.0)
-        q_atual = max(q_atual - mortos_dia, 0.0)
+    while pm < PESO_DESPESCA_G and len(registros) < limite_dias:
+        es = detectar_estacao(data)
+        curva = linha_curva(curvas, es, dc)
+        
+        # Logica do notebook:
+        # mort_dia = p['mortalidade'] / 100.0
+        # q -= q * mort_dia
+        # mort_sem += mort_dia * 100
+        mort_dia_rate = float(curva["mortalidade_pct"]) / 100.0
+        q = max(q - (q * mort_dia_rate), 0.0)
+        mort_sem += (mort_dia_rate * 100.0)
+        
+        # pm += p['gdp']; gs += p['gdp']
         gdp_dia = float(curva["gdp_g"])
-        pm_atual = pm_atual + gdp_dia
-        bm_atual = q_atual * pm_atual / 1000.0
-        cr_dia = bm_atual * float(curva["pv"])
-
-        cr_semana += cr_dia
-        cr_acumulado += cr_dia
-        mortos_acumulado += mortos_dia
-        mortos_semana += mortos_dia
-        gdp_total += gdp_dia
-        gdp_total_semana += gdp_dia
-        dias_total += 1
-        dias_semana += 1
-
-        delta_bm_semana = bm_atual - bm_inicio_semana
-        delta_bm_total = bm_atual - bm_inicial
-        fechamento_semana = dia_simulado % 7 == 0
-        tca_semana = (
-            cr_semana / delta_bm_semana if fechamento_semana and delta_bm_semana > 0 else 0.0
-        )
-        tca_acumulado = cr_acumulado / delta_bm_total if delta_bm_total > 0 else 0.0
-        gdp_semana = gdp_total_semana / dias_semana if fechamento_semana and dias_semana else 0.0
-        gdp_acumulado = gdp_total / dias_total if dias_total else 0.0
-        mortalidade_semana_pct = (
-            mortos_semana / q_inicio_semana * 100.0 if q_inicio_semana > 0 else 0.0
-        )
-
+        pm += gdp_dia
+        gs += gdp_dia
+        
+        # racao_dia_kg = (p['racao_und_g'] * q) / 1000.0
+        # cs_kg += racao_dia_kg; ca_kg += racao_dia_kg
+        racao_dia_kg = (float(curva["racao_und_g"]) * q) / 1000.0
+        cs_kg += racao_dia_kg
+        ca_kg += racao_dia_kg
+        
+        # bm = (q * pm) / 1000
+        bm = (q * pm) / 1000.0
+        
+        ds += 1
+        
+        # tca_s = cs_kg / gs if ds == 7 and gs > 0 else 0
+        # gdp_s = gs / 7 if ds == 7 else 0
+        tca_s = cs_kg / gs if ds == 7 and gs > 0 else 0.0
+        gdp_s = gs / 7.0 if ds == 7 else 0.0
+        
+        # Acumulados
+        # dt_lote = dc - dia_ciclo(pi, curvas)
+        # gdp_ac = (pm - pi) / dt_lote
+        # gkg = (pm - pi) * q / 1000
+        # tca_ac = ca_kg / gkg
+        dias_decorridos = len(registros) + 1
+        gdp_ac = (pm - pi) / dias_decorridos if dias_decorridos > 0 else 0.0
+        gkg = (pm - pi) * q / 1000.0
+        tca_ac = ca_kg / gkg if gkg > 0 else 0.0
+        
+        mort_ac = (1.0 - q / qi) * 100.0 if qi > 0 else 0.0
+        
         adicionar_registro(
             registros,
             lote,
-            data_atual,
-            semana,
-            q_atual,
-            pm_atual,
-            bm_atual,
-            0.0 if fechamento_semana else cr_semana,
-            cr_acumulado,
-            tca_semana,
-            tca_acumulado,
-            gdp_semana,
-            gdp_acumulado,
-            mortalidade_semana_pct,
-            mortos_acumulado,
+            data,
+            sem,
+            q,
+            pm,
+            bm,
+            cs_kg,
+            ca_kg,
+            tca_s,
+            tca_ac,
+            gdp_s,
+            gdp_ac,
+            mort_sem,
+            mort_ac,
         )
+        
+        if ds == 7:
+            sem += 1
+            ds = 0
+            cs_kg = 0.0
+            gs = 0.0
+            mort_sem = 0.0
+            
+        dc += 1
+        data += timedelta(days=1)
 
-        if fechamento_semana:
-            cr_semana = 0.0
-            gdp_total_semana = 0.0
-            dias_semana = 0
-            bm_inicio_semana = bm_atual
-            q_inicio_semana = q_atual
-            mortos_semana = 0.0
-
-        dia_ciclo += 1
-
-        if pm_atual >= PESO_DESPESCA_G or q_atual <= 0:
-            break
+    if registros:
+        registros[-1]["Status"] = "Despescado"
 
     return registros
 
@@ -623,8 +639,16 @@ def formatar_numero_saida(valor: object, casas: int) -> str:
         return ""
     if math.isnan(numero):
         return ""
-    texto = f"{numero:.{casas}f}".rstrip("0").rstrip(".")
-    return texto if "." in texto else f"{texto}.0"
+    texto = f"{numero:,.{casas}f}"
+    return texto.replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def formatar_inteiro_saida(valor: object) -> str:
+    try:
+        numero = int(round(float(valor or 0)))
+    except (TypeError, ValueError):
+        numero = 0
+    return f"{numero:,}".replace(",", ".")
 
 
 def formatar_relatorio(registros: list[dict]) -> list[dict[str, object]]:
@@ -643,17 +667,18 @@ def formatar_relatorio(registros: list[dict]) -> list[dict[str, object]]:
         "Sobrevivencia da Semana (%)": 2,
         "Sobrevivencia Acumulada (%)": 2,
     }
+    colunas_inteiras = {"Semana", "Quantidade de Peixes"}
 
     for registro in registros:
         linha = {}
         for coluna in SAIDA_COLUNAS:
             valor = registro.get(coluna, "")
             if coluna == "Data" and isinstance(valor, date):
-                linha[coluna] = valor.strftime("%Y-%m-%d")
+                linha[coluna] = valor.strftime("%d/%m/%Y")
             elif coluna in casas_decimais:
                 linha[coluna] = formatar_numero_saida(valor, casas_decimais[coluna])
-            elif coluna == "Quantidade de Peixes":
-                linha[coluna] = int(round(float(valor or 0)))
+            elif coluna in colunas_inteiras:
+                linha[coluna] = formatar_inteiro_saida(valor)
             else:
                 linha[coluna] = valor
         saida.append(linha)
@@ -662,7 +687,7 @@ def formatar_relatorio(registros: list[dict]) -> list[dict[str, object]]:
 
 def salvar_csv(caminho: Path, registros: list[dict[str, object]]) -> None:
     with caminho.open("w", encoding="utf-8-sig", newline="") as arquivo:
-        writer = csv.DictWriter(arquivo, fieldnames=SAIDA_COLUNAS, delimiter=",")
+        writer = csv.DictWriter(arquivo, fieldnames=SAIDA_COLUNAS, delimiter=";")
         writer.writeheader()
         writer.writerows(registros)
 

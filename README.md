@@ -13,10 +13,11 @@ Durante a simulação, ele calcula:
 - quantidade de peixes sobreviventes;
 - peso médio diário;
 - biomassa em kg;
-- consumo de ração semanal e acumulado;
-- TCA semanal e acumulada;
-- GDP médio semanal e acumulado;
-- mortalidade e sobrevivência semanal/acumulada;
+- consumo de ração diário e acumulado;
+- TCA diária e acumulada;
+- GDP diário e acumulado;
+- mortalidade diária e mortalidade acumulada;
+- sobrevivência diária e acumulada;
 - status do lote: `Alevinagem`, `Class 1 — Recria`, `Class 2 — Engorda` ou `Despescado`.
 
 O desempenho é ajustado por sazonalidade:
@@ -56,7 +57,7 @@ O script aceita os cabeçalhos usados nos arquivos de exemplo, como:
 
 ## Arquivo de saída
 
-O relatório final é salvo como CSV com a mesma estrutura do arquivo de referência `simulacao_completa_20260524_003352.csv`.
+O relatório final é salvo como CSV diário no padrão brasileiro.
 
 Por padrão, o nome gerado é:
 
@@ -66,10 +67,28 @@ simulacao_completa_br.csv
 
 A saída usa:
 
-- separador por vírgula (`,`),
+- separador por ponto e vírgula (`;`),
 - codificação `utf-8-sig`,
 - data no formato `YYYY-MM-DD`,
+- ponto como separador de milhar e vírgula como separador decimal nas colunas numéricas,
 - uma linha por dia simulado de cada lote.
+
+## Regras de cálculo
+
+As principais métricas do relatório são calculadas assim:
+
+| Métrica | Fórmula |
+| --- | --- |
+| Consumo de Ração Diário | `Biomassa do dia (kg) * (%PV da curva / 100)` |
+| Consumo de Ração Acumulado | Soma do consumo diário desde o início da simulação do lote. |
+| Mortalidade Diária | `Quantidade ativa no início do dia * (%mortalidade da curva / 100)` |
+| Mortalidade Acumulada (%) | `Mortos acumulados / quantidade inicial * 100` |
+| GDP Diário | `Peso médio do dia - peso médio do dia anterior` |
+| GDP Acumulado | `Peso médio do dia - peso médio inicial` |
+| TCA Diário | `Consumo diário / ganho de biomassa do dia` |
+| TCA Acumulado | `Consumo acumulado / ganho de biomassa acumulado` |
+
+Quando o ganho de biomassa é menor ou igual a zero, a TCA correspondente é exportada como `0`.
 
 ## Como utilizar
 

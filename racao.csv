@@ -1,0 +1,6 @@
+﻿Peso_Medio_Inicial;Peso_Medio_Final;Fase_de_Producao;Tipo_Racao;Preco_kg
+0,5;15;Alevinagem;1mm;5
+15;30;Alevinagem;2mm;4
+30;100;Recria;3mm;3
+100;300;Engorda;4mm;2
+300;1300;Engorda;5mm;2
