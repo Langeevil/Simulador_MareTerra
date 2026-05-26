@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
 import math
 import re
@@ -13,6 +14,8 @@ from typing import Iterable
 
 PESO_DESPESCA_G = 900.0
 LIMITE_DIAS = 730
+FATOR_AJUSTE_PEIXE_PRONTO = 0.84
+MARCADOR_PEIXE_PRONTO = "pronto"
 
 
 SAIDA_COLUNAS = [
@@ -113,7 +116,7 @@ ALIASES_CURVAS = {
         "m pct",
         "m_pct",
     ],
-    "pv_pct": [
+        "pv_pct": [
         "pv",
         "pv pct",
         "pv %",
@@ -130,6 +133,14 @@ ALIASES_CURVAS = {
         "racao/peixe",
         "consumo peixe",
         "qtd racao",
+    ],
+    "marco": [
+        "marco",
+        "marco de gestao",
+        "marco de gestao verao",
+        "marco de gestao inverno",
+        "marcador",
+        "status curva",
     ],
 }
 
@@ -245,7 +256,7 @@ def normalizar_estacao(valor: object) -> str:
 
 def definir_status_base(peso_medio_g: float) -> str:
     if peso_medio_g >= PESO_DESPESCA_G:
-        return "Peixe pronto"
+        return "Peixe Pronto"
     return ""
 
 
@@ -276,6 +287,9 @@ def preparar_curvas(tabela: CsvTable) -> list[Curva]:
         tabela.headers, ALIASES_CURVAS["mortalidade_pct"], contexto="curvas.csv"
     )
     col_pv = encontrar_coluna(tabela.headers, ALIASES_CURVAS["pv_pct"], contexto="curvas.csv")
+    col_marco = encontrar_coluna(
+        tabela.headers, ALIASES_CURVAS["marco"], obrigatoria=False, contexto="curvas.csv"
+    )
     col_racao = encontrar_coluna(tabela.headers, ALIASES_CURVAS["racao_und"], contexto="curvas.csv")
 
     curvas: list[Curva] = []
@@ -299,6 +313,7 @@ def preparar_curvas(tabela: CsvTable) -> list[Curva]:
                 "mortalidade_pct": mortalidade,
                 "pv": pv,
                 "racao_und_g": racao_und,
+                "marco": str(row[col_marco]).strip() if col_marco else "",
             }
         )
 
@@ -317,6 +332,7 @@ def preparar_curvas_largas(tabela: CsvTable) -> list[Curva]:
             "mort": ["mortalidade verao", "mortalidade pct verao"],
             "gdp": ["gdp verao"],
             "racao": ["qtd racao und verao", "racao und verao"],
+            "marco": ["marco de gestao verao", "marco de gestao"],
         },
         "I": {
             "dia": ["dia inverno"],
@@ -325,6 +341,7 @@ def preparar_curvas_largas(tabela: CsvTable) -> list[Curva]:
             "mort": ["mortalidade inverno", "mortalidade pct inverno"],
             "gdp": ["gdp inverno"],
             "racao": ["qtd racao und inverno", "racao und inverno"],
+            "marco": ["marco de gestao inverno", "marco de gestao c", "marco de gestao"],
         },
     }
 
@@ -336,6 +353,7 @@ def preparar_curvas_largas(tabela: CsvTable) -> list[Curva]:
         col_mort = encontrar_coluna(tabela.headers, aliases["mort"], obrigatoria=False)
         col_gdp = encontrar_coluna(tabela.headers, aliases["gdp"], obrigatoria=False)
         col_racao = encontrar_coluna(tabela.headers, aliases["racao"], obrigatoria=False)
+        col_marco = encontrar_coluna(tabela.headers, aliases["marco"], obrigatoria=False)
         if not all([col_dia, col_peso, col_pv, col_mort, col_gdp, col_racao]):
             continue
 
@@ -357,6 +375,7 @@ def preparar_curvas_largas(tabela: CsvTable) -> list[Curva]:
                     "mortalidade_pct": mortalidade,
                     "pv": pv,
                     "racao_und_g": racao_und,
+                    "marco": str(row[col_marco]).strip() if col_marco else "",
                 }
             )
 
@@ -444,11 +463,79 @@ def determinar_dia_ciclo(peso_medio_g: float, curvas: list[Curva], estacao_atual
 
 
 def linha_curva(curvas: list[Curva], estacao: str, dia_ciclo: int) -> Curva:
-    subset = [c for c in curvas if c["estacao"] == estacao] or curvas
-    anteriores = [c for c in subset if int(c["dia"]) <= dia_ciclo]
-    if anteriores:
-        return max(anteriores, key=lambda c: int(c["dia"]))
-    return min(subset, key=lambda c: int(c["dia"]))
+    cache = getattr(linha_curva, "_cache", {})
+    cache_key = (id(curvas), estacao)
+    if cache_key not in cache:
+        subset = [c for c in curvas if c["estacao"] == estacao] or curvas
+        subset = sorted(subset, key=lambda c: int(c["dia"]))
+        cache[cache_key] = ([int(c["dia"]) for c in subset], subset)
+        setattr(linha_curva, "_cache", cache)
+
+    dias, subset = cache[cache_key]
+    pos = bisect.bisect_right(dias, dia_ciclo) - 1
+    if pos < 0:
+        return subset[0]
+    return subset[pos]
+
+
+def normalizar_marcador_status(valor: object) -> str:
+    texto = normalizar_nome(valor)
+    if not texto:
+        return ""
+    if "pronto" in texto:
+        return "Peixe Pronto"
+    if "class 1" in texto or "classe 1" in texto:
+        return "Class 1"
+    if "class 2" in texto or "classe 2" in texto:
+        return "Class 2"
+    return ""
+
+
+def definir_status(peso_medio_g: float, curva: Curva | None = None) -> str:
+    peso_medio_g = round(float(peso_medio_g), 2)
+    if peso_medio_g >= PESO_DESPESCA_G:
+        return "Peixe Pronto"
+    if peso_medio_g == 120.0:
+        return "Class 2"
+    if peso_medio_g == 30.0:
+        return "Class 1"
+    if curva is None:
+        return ""
+    return normalizar_marcador_status(curva.get("marco", ""))
+
+
+def curva_marca_peixe_pronto(curva: Curva) -> bool:
+    return normalizar_marcador_status(curva.get("marco", "")) == "Peixe Pronto"
+
+
+def peso_marcador_peixe_pronto(curvas: list[Curva], estacao: str) -> float:
+    cache = getattr(peso_marcador_peixe_pronto, "_cache", {})
+    cache_key = (id(curvas), estacao)
+    if cache_key in cache:
+        return cache[cache_key]
+
+    candidatos = [
+        float(curva["peso_ref_g"])
+        for curva in curvas
+        if curva["estacao"] == estacao and curva_marca_peixe_pronto(curva)
+    ]
+    peso = min(candidatos) if candidatos else PESO_DESPESCA_G
+    cache[cache_key] = peso
+    setattr(peso_marcador_peixe_pronto, "_cache", cache)
+    return peso
+
+
+def atingiu_peixe_pronto(pm_real: float, curva: Curva, curvas: list[Curva], estacao: str) -> bool:
+    return curva_marca_peixe_pronto(curva) or pm_real >= peso_marcador_peixe_pronto(curvas, estacao)
+
+
+def fator_regional_lote(lote: Lote) -> float:
+    regiao_norm = normalizar_nome(lote.regiao)
+    if "itapora" in regiao_norm:
+        return 0.80
+    if "parana" in regiao_norm:
+        return 0.85
+    return 1.0
 
 
 def adicionar_registro(
@@ -504,150 +591,132 @@ def adicionar_registro(
     )
 
 
-def simular_lote(lote: Lote, curvas: list[Curva], limite_dias: int = LIMITE_DIAS) -> list[dict]:
-    if lote.quantidade <= 0 or not (0 < lote.peso_medio_g < PESO_DESPESCA_G):
+def simular_lote(
+    lote: Lote,
+    curvas: list[Curva],
+    limite_dias: int = LIMITE_DIAS,
+    data_relatorio: date | None = None,
+) -> list[dict]:
+    if lote.quantidade <= 0 or lote.peso_medio_g <= 0:
         return []
 
+    data_relatorio = data_relatorio or date.today()
     data_inicial = lote.data_alojamento
-    estacao_inicial = detectar_estacao(data_inicial)
-    dia_ciclo_start = determinar_dia_ciclo(lote.peso_medio_g, curvas, estacao_inicial)
-    
-    # Fatores regionais
-    regiao_norm = normalizar_nome(lote.regiao)
-    fator_regional = 1.0
-    if "itapora" in regiao_norm:
-        fator_regional = 0.80
-    elif "parana" in regiao_norm:
-        fator_regional = 0.85
-    elif "aparecida" in regiao_norm:
-        fator_regional = 1.0
+    fator_regional = fator_regional_lote(lote)
 
     q = lote.quantidade
-    pm = lote.peso_medio_g
-    pm_real = lote.peso_medio_g
-    pi = lote.peso_medio_g
     qi = lote.quantidade
-    bm_inicial = (qi * pi) / 1000.0
-    
+    pi = lote.peso_medio_g
+    pm_real = pi
+    pm_relatorio = pi
+    bm_inicial = qi * pi / 1000.0
+    bm_anterior = bm_inicial
+
     ca_kg = 0.0
     mort_acumulada_abs = 0.0
-    
-    dc = dia_ciclo_start
-    data = data_inicial
+    dc = determinar_dia_ciclo(pi, curvas, detectar_estacao(data_inicial))
+    curva_inicial = linha_curva(curvas, detectar_estacao(data_inicial), dc)
+    data_atual = data_inicial
     registros: list[dict[str, object]] = []
-    history_eval = []
+    peixe_pronto_no_historico = False
 
-    hoje = date.today()
+    adicionar_registro(
+        registros,
+        lote,
+        data_inicial,
+        1,
+        q,
+        pi,
+        bm_inicial,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        definir_status(pi, curva_inicial),
+    )
 
-    while ((data < hoje and pm_real < PESO_DESPESCA_G) or (data >= hoje and pm < PESO_DESPESCA_G)) and (data - data_inicial).days < limite_dias:
-        es = detectar_estacao(data)
-        curva = linha_curva(curvas, es, dc)
-        
-        pm_anterior = pm
-        bm_anterior = (q * pm_anterior) / 1000.0
+    def simular_um_dia(data_dia: date, registrar: bool) -> None:
+        nonlocal q, pm_real, pm_relatorio, bm_anterior, ca_kg
+        nonlocal mort_acumulada_abs, dc, peixe_pronto_no_historico
 
-        # Mortalidade Diaria
-        mort_dia_rate = float(curva["mortalidade_pct"]) / 100.0
-        mortos_dia = q * mort_dia_rate
+        estacao = detectar_estacao(data_dia)
+        curva = linha_curva(curvas, estacao, dc)
+        pm_relatorio_anterior = pm_relatorio
+        bm_anterior_dia = bm_anterior
+
+        mortos_dia = q * (float(curva["mortalidade_pct"]) / 100.0)
         q = max(q - mortos_dia, 0.0)
         mort_acumulada_abs += mortos_dia
-        
-        # Ganho de Peso Diario Base
-        gdp_base = float(curva["gdp_g"]) * fator_regional
-        
-        pm_real += gdp_base
-        
-        # Penalidade Historica
-        if data < hoje:
-            gdp_dia = gdp_base * 0.84
-        else:
-            gdp_dia = gdp_base
-        pm += gdp_dia
-        
-        bm = (q * pm) / 1000.0
-        
+
+        pm_real += float(curva["gdp_g"]) * fator_regional
+        if atingiu_peixe_pronto(pm_real, curva, curvas, estacao):
+            peixe_pronto_no_historico = True
+
+        ajuste_aplicado = registrar and data_dia == data_relatorio and peixe_pronto_no_historico
+        pm_relatorio = pm_real * FATOR_AJUSTE_PEIXE_PRONTO if ajuste_aplicado else pm_real
+        bm = q * pm_relatorio / 1000.0
+
         pv_rate = (float(curva["pv"]) / 100.0) * fator_regional
         racao_dia_kg = bm * pv_rate
         ca_kg += racao_dia_kg
-        
-        ganho_bm_dia = bm - bm_anterior
-        tca_diario = racao_dia_kg / ganho_bm_dia if ganho_bm_dia > 0 else 0.0
-        
+
+        ganho_bm_dia = bm - bm_anterior_dia
         ganho_bm_total = bm - bm_inicial
+        gdp_diario = 0.0 if ajuste_aplicado else pm_relatorio - pm_relatorio_anterior
+        tca_diario = 0.0 if ajuste_aplicado or ganho_bm_dia <= 0 else racao_dia_kg / ganho_bm_dia
         tca_ac = ca_kg / ganho_bm_total if ganho_bm_total > 0 else 0.0
-        
-        # Status
-        pm_eval = pm_real if data < hoje else pm
-        history_eval.append((data, pm_eval))
 
-        dias_totais_simulados = (data - data_inicial).days + 1
-        semana_num = ((dias_totais_simulados - 1) // 7) + 1
-        
-        adicionar_registro(
-            registros,
-            lote,
-            data,
-            semana_num,
-            q,
-            pm,
-            bm,
-            racao_dia_kg,
-            ca_kg,
-            tca_diario,
-            tca_ac,
-            gdp_dia,
-            pm - pi,
-            mortos_dia,
-            mort_acumulada_abs,
-            ""
-        )
-        
+        if registrar:
+            dias_totais = (data_dia - data_inicial).days + 1
+            semana_num = ((dias_totais - 1) // 7) + 1
+            adicionar_registro(
+                registros,
+                lote,
+                data_dia,
+                semana_num,
+                q,
+                pm_relatorio,
+                bm,
+                racao_dia_kg,
+                ca_kg,
+                tca_diario,
+                tca_ac,
+                gdp_diario,
+                pm_relatorio - pi,
+                mortos_dia,
+                mort_acumulada_abs,
+                definir_status(pm_relatorio, curva),
+            )
+
+        bm_anterior = bm
         dc += 1
-        data += timedelta(days=1)
 
-    # Pos-processamento exato de marcadores
-    data_class1 = None
-    data_class2 = None
-    data_pronto = None
-    
-    if any(p >= 30.0 for d, p in history_eval) and pi <= 30.0:
-        rec_antes, rec_depois = None, None
-        for d, p in history_eval:
-            if p <= 30.0: rec_antes = (d, p)
-            if p >= 30.0 and rec_depois is None:
-                rec_depois = (d, p)
-                break
-        if rec_antes and rec_depois:
-            if (30.0 - rec_antes[1]) < (rec_depois[1] - 30.0):
-                data_class1 = rec_antes[0]
-            else:
-                data_class1 = rec_depois[0]
+        if ajuste_aplicado:
+            pm_real = pm_relatorio
+            peixe_pronto_no_historico = pm_relatorio >= PESO_DESPESCA_G
 
-    if any(p >= 120.0 for d, p in history_eval) and pi <= 120.0:
-        rec_antes, rec_depois = None, None
-        for d, p in history_eval:
-            if p <= 120.0: rec_antes = (d, p)
-            if p >= 120.0 and rec_depois is None:
-                rec_depois = (d, p)
-                break
-        if rec_antes and rec_depois:
-            if (120.0 - rec_antes[1]) < (rec_depois[1] - 120.0):
-                data_class2 = rec_antes[0]
-            else:
-                data_class2 = rec_depois[0]
-
-    for d, p in history_eval:
-        if p >= PESO_DESPESCA_G:
-            data_pronto = d
+    while data_atual < data_relatorio and (data_atual - data_inicial).days < limite_dias:
+        data_atual += timedelta(days=1)
+        simular_um_dia(data_atual, registrar=data_atual == data_relatorio)
+        if q <= 0:
             break
-            
-    for r in registros:
-        d = r["Data"]
-        if d == data_class1: r["Status"] = "Class 1"
-        if d == data_class2: r["Status"] = "Class 2"
-        if d == data_pronto: r["Status"] = "Peixe pronto"
 
-    return [r for r in registros if r["Data"] >= hoje or r["Status"] != ""]
+    if data_atual < data_relatorio or q <= 0:
+        return registros
+
+    while (
+        pm_relatorio < PESO_DESPESCA_G
+        and q > 0
+        and (data_atual - data_inicial).days < limite_dias
+    ):
+        data_atual += timedelta(days=1)
+        simular_um_dia(data_atual, registrar=True)
+
+    return registros
 
 
 def simular_todos_lotes(
@@ -656,6 +725,7 @@ def simular_todos_lotes(
     curvas: list[Curva],
     *,
     mostrar_erros: bool = False,
+    data_relatorio: date | None = None,
 ) -> list[dict]:
     colunas = colunas_plantel(plantel)
     resultados: list[dict] = []
@@ -663,9 +733,9 @@ def simular_todos_lotes(
     for idx, linha in enumerate(plantel.rows, start=2):
         try:
             lote = lote_da_linha(linha, colunas, tanques)
-            if lote.quantidade <= 0 or not (0 < lote.peso_medio_g < PESO_DESPESCA_G):
+            if lote.quantidade <= 0 or lote.peso_medio_g <= 0:
                 continue
-            resultados.extend(simular_lote(lote, curvas))
+            resultados.extend(simular_lote(lote, curvas, data_relatorio=data_relatorio))
         except Exception as exc:
             if mostrar_erros:
                 print(f"Lote ignorado na linha {idx}: {exc}")
@@ -741,6 +811,7 @@ def executar(args: argparse.Namespace) -> Path:
     tanques = preparar_tanques(carregar_csv(input_dir / args.tanques))
     plantel = carregar_csv(input_dir / args.plantel)
     curvas = preparar_curvas(carregar_csv(input_dir / args.curvas))
+    data_relatorio = parse_data_br(args.data_relatorio) if args.data_relatorio else date.today()
 
     # racao.csv e carregado para validar a presenca da matriz descrita.
     carregar_csv(input_dir / args.racao)
@@ -750,6 +821,7 @@ def executar(args: argparse.Namespace) -> Path:
         tanques=tanques,
         curvas=curvas,
         mostrar_erros=args.mostrar_erros,
+        data_relatorio=data_relatorio,
     )
     resultado_br = formatar_relatorio(resultado)
 
@@ -778,6 +850,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--mostrar-erros",
         action="store_true",
         help="Mostra lotes ignorados por inconsistencias de dados.",
+    )
+    parser.add_argument(
+        "--data-relatorio",
+        default="",
+        help="Data de geracao do relatorio no formato dd/mm/aaaa ou aaaa-mm-dd. Padrao: hoje.",
     )
     return parser
 

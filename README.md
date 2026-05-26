@@ -18,7 +18,7 @@ Durante a simulação, ele calcula:
 - GDP diário e acumulado;
 - mortalidade diária e mortalidade acumulada;
 - sobrevivência diária e acumulada;
-- status do lote: `Alevinagem`, `Class 1 — Recria`, `Class 2 — Engorda` ou `Despescado`.
+- marcadores de status: `Class 1`, `Class 2` e `Peixe Pronto`, preenchidos apenas no dia marcador da curva.
 
 O desempenho é ajustado por sazonalidade:
 
