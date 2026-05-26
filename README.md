@@ -14,6 +14,7 @@ Durante a simulação, ele calcula:
 - peso médio diário;
 - biomassa em kg;
 - consumo de ração diário e acumulado;
+- custo de ração diário e acumulado;
 - TCA diária e acumulada;
 - GDP diário e acumulado;
 - mortalidade diária e mortalidade acumulada;
@@ -24,6 +25,8 @@ O desempenho é ajustado por sazonalidade:
 
 - `Verão`: outubro a março;
 - `Inverno`: abril a setembro.
+
+A estação é definida pela data de biometria do lote no `plantel.csv` (`Dt.últ Biometria`) e determina qual lado da curva será usado para `%PV`, mortalidade e GDP.
 
 ## Arquivos de entrada
 
@@ -79,8 +82,10 @@ As principais métricas do relatório são calculadas assim:
 
 | Métrica | Fórmula |
 | --- | --- |
-| Consumo de Ração Diário | `Biomassa do dia (kg) * (%PV da curva / 100)` |
+| Consumo de Ração Diário | `Biomassa do dia (kg) * taxa PV normalizada` |
 | Consumo de Ração Acumulado | Soma do consumo diário desde o início da simulação do lote. |
+| Custo de Ração Diário | `Consumo de ração diário (kg) * Preço/kg da faixa de peso em racao.csv` |
+| Custo de Ração Acumulado | Soma dos custos diários por lote a partir da data do relatório. Antes dessa data, fica `0`. |
 | Mortalidade Diária | `Quantidade ativa no início do dia * (%mortalidade da curva / 100)` |
 | Mortalidade Acumulada (%) | `Mortos acumulados / quantidade inicial * 100` |
 | GDP Diário | `Peso médio do dia - peso médio do dia anterior` |
@@ -89,6 +94,8 @@ As principais métricas do relatório são calculadas assim:
 | TCA Acumulado | `Consumo acumulado / ganho de biomassa acumulado` |
 
 Quando o ganho de biomassa é menor ou igual a zero, a TCA correspondente é exportada como `0`.
+
+Observação sobre `%PV`: nos arquivos atuais, valores como `0,0135` já representam `1,35%` da biomassa. Por isso, o simulador usa o valor diretamente quando ele é menor ou igual a `1`. Se algum arquivo vier com `1,35`, o código interpreta como percentual e divide por `100`.
 
 ## Como utilizar
 

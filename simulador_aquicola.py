@@ -28,6 +28,8 @@ SAIDA_COLUNAS = [
     "Biomassa (kg)",
     "Consumo de Racao Diario (kg)",
     "Consumo de Racao Acumulado (kg)",
+    "Custo de Racao Diario",
+    "Custo de Racao Acumulado",
     "TCA Diario",
     "TCA Acumulado",
     "GDP Diario (g/dia)",
@@ -152,6 +154,25 @@ ALIASES_TANQUES = {
 }
 
 
+ALIASES_RACAO = {
+    "peso_inicial": [
+        "peso medio inicial",
+        "peso_medio_inicial",
+        "peso inicial",
+        "pm inicial",
+        "inicio",
+    ],
+    "peso_final": [
+        "peso medio final",
+        "peso_medio_final",
+        "peso final",
+        "pm final",
+        "fim",
+    ],
+    "preco_kg": ["preco kg", "preco_kg", "preco", "valor kg", "custo kg"],
+}
+
+
 @dataclass(frozen=True)
 class CsvTable:
     headers: list[str]
@@ -167,6 +188,13 @@ class Lote:
     quantidade: float
     peso_medio_g: float
     data_alojamento: date
+
+
+@dataclass(frozen=True)
+class FaixaRacao:
+    peso_inicial_g: float
+    peso_final_g: float
+    preco_kg: float
 
 
 Curva = dict[str, float | int | str]
@@ -224,6 +252,11 @@ def parse_numero_br(valor: object) -> float:
         return float(texto)
     except ValueError:
         return math.nan
+
+
+def normalizar_taxa_pv(valor: object) -> float:
+    taxa = float(valor)
+    return taxa / 100.0 if taxa > 1.0 else taxa
 
 
 def parse_data_br(valor: object) -> date:
@@ -408,6 +441,92 @@ def preparar_tanques(tabela: CsvTable) -> dict[str, dict[str, str]]:
     return tanques
 
 
+def preparar_racao(tabela: CsvTable) -> list[FaixaRacao]:
+    col_peso_inicial = encontrar_coluna(
+        tabela.headers, ALIASES_RACAO["peso_inicial"], contexto="racao.csv"
+    )
+    col_peso_final = encontrar_coluna(
+        tabela.headers, ALIASES_RACAO["peso_final"], contexto="racao.csv"
+    )
+    col_preco = encontrar_coluna(tabela.headers, ALIASES_RACAO["preco_kg"], contexto="racao.csv")
+
+    faixas: list[FaixaRacao] = []
+    for row in tabela.rows:
+        peso_inicial = parse_numero_br(row[col_peso_inicial])
+        peso_final = parse_numero_br(row[col_peso_final])
+        preco = parse_numero_br(row[col_preco])
+        if any(math.isnan(v) for v in [peso_inicial, peso_final, preco]):
+            continue
+        faixas.append(
+            FaixaRacao(
+                peso_inicial_g=peso_inicial,
+                peso_final_g=peso_final,
+                preco_kg=preco,
+            )
+        )
+
+    if not faixas:
+        raise ValueError("racao.csv nao possui faixas validas de peso/preco.")
+
+    return sorted(faixas, key=lambda faixa: faixa.peso_inicial_g)
+
+
+def buscar_preco_racao(peso_medio_g: float, faixas_racao: list[FaixaRacao]) -> float:
+    inicios = [faixa.peso_inicial_g for faixa in faixas_racao]
+    idx = bisect.bisect_right(inicios, peso_medio_g) - 1
+    if idx >= 0:
+        faixa = faixas_racao[idx]
+        ultima_faixa = idx == len(faixas_racao) - 1
+        if faixa.peso_inicial_g <= peso_medio_g < faixa.peso_final_g or (
+            ultima_faixa and peso_medio_g <= faixa.peso_final_g
+        ):
+            return faixa.preco_kg
+
+    for faixa in faixas_racao:
+        if faixa.peso_inicial_g <= peso_medio_g <= faixa.peso_final_g:
+            return faixa.preco_kg
+    return 0.0
+
+
+def adicionar_custos_racao(
+    registros: list[dict],
+    faixas_racao: list[FaixaRacao],
+    dia_solicitacao_relatorio: date,
+) -> list[dict]:
+    """Adiciona custo diario e acumulado de racao ao relatorio bruto.
+
+    O custo diario usa a faixa de preco em `racao.csv` correspondente ao peso
+    medio da linha. O acumulado e zerado antes de `dia_solicitacao_relatorio`
+    e, a partir dessa data, soma os custos diarios por lote.
+    """
+    acumulado_por_lote: dict[tuple[object, object], float] = {}
+    resultado: list[dict] = []
+
+    for registro in registros:
+        linha = registro.copy()
+        peso_medio = float(linha.get("Peso Medio (g)", 0.0) or 0.0)
+        consumo_diario = float(linha.get("Consumo de Racao Diario (kg)", 0.0) or 0.0)
+        preco_kg = buscar_preco_racao(peso_medio, faixas_racao)
+        custo_diario = consumo_diario * preco_kg
+
+        lote_key = (linha.get("Produtor"), linha.get("Tanque"))
+        data_linha = linha.get("Data")
+        if isinstance(data_linha, datetime):
+            data_linha = data_linha.date()
+
+        if isinstance(data_linha, date) and data_linha >= dia_solicitacao_relatorio:
+            acumulado_por_lote[lote_key] = acumulado_por_lote.get(lote_key, 0.0) + custo_diario
+            custo_acumulado = acumulado_por_lote[lote_key]
+        else:
+            custo_acumulado = 0.0
+
+        linha["Custo de Racao Diario"] = custo_diario
+        linha["Custo de Racao Acumulado"] = custo_acumulado
+        resultado.append(linha)
+
+    return resultado
+
+
 def colunas_plantel(tabela: CsvTable) -> dict[str, str | None]:
     return {
         chave: encontrar_coluna(
@@ -457,8 +576,8 @@ def lote_da_linha(
 
 
 def determinar_dia_ciclo(peso_medio_g: float, curvas: list[Curva], estacao_atual: str) -> int:
-    # A logica do notebook busca o peso mais proximo em AMBAS as estacoes para definir o dia inicial
-    curva = min(curvas, key=lambda c: abs(float(c["peso_ref_g"]) - peso_medio_g))
+    subset = [c for c in curvas if c["estacao"] == estacao_atual] or curvas
+    curva = min(subset, key=lambda c: abs(float(c["peso_ref_g"]) - peso_medio_g))
     return int(curva["dia"])
 
 
@@ -602,6 +721,7 @@ def simular_lote(
 
     data_relatorio = data_relatorio or date.today()
     data_inicial = lote.data_alojamento
+    estacao_lote = detectar_estacao(data_inicial)
     fator_regional = fator_regional_lote(lote)
 
     q = lote.quantidade
@@ -614,8 +734,8 @@ def simular_lote(
 
     ca_kg = 0.0
     mort_acumulada_abs = 0.0
-    dc = determinar_dia_ciclo(pi, curvas, detectar_estacao(data_inicial))
-    curva_inicial = linha_curva(curvas, detectar_estacao(data_inicial), dc)
+    dc = determinar_dia_ciclo(pi, curvas, estacao_lote)
+    curva_inicial = linha_curva(curvas, estacao_lote, dc)
     data_atual = data_inicial
     registros: list[dict[str, object]] = []
     peixe_pronto_no_historico = False
@@ -643,7 +763,9 @@ def simular_lote(
         nonlocal q, pm_real, pm_relatorio, bm_anterior, ca_kg
         nonlocal mort_acumulada_abs, dc, peixe_pronto_no_historico
 
-        estacao = detectar_estacao(data_dia)
+        # A coluna da curva (%PV, GDP e mortalidade) e definida pela estacao
+        # da data de biometria no plantel, nao pela data projetada.
+        estacao = estacao_lote
         curva = linha_curva(curvas, estacao, dc)
         pm_relatorio_anterior = pm_relatorio
         bm_anterior_dia = bm_anterior
@@ -660,7 +782,7 @@ def simular_lote(
         pm_relatorio = pm_real * FATOR_AJUSTE_PEIXE_PRONTO if ajuste_aplicado else pm_real
         bm = q * pm_relatorio / 1000.0
 
-        pv_rate = (float(curva["pv"]) / 100.0) * fator_regional
+        pv_rate = normalizar_taxa_pv(curva["pv"]) * fator_regional
         racao_dia_kg = bm * pv_rate
         ca_kg += racao_dia_kg
 
@@ -772,6 +894,8 @@ def formatar_relatorio(registros: list[dict]) -> list[dict[str, object]]:
         "Biomassa (kg)": 2,
         "Consumo de Racao Diario (kg)": 2,
         "Consumo de Racao Acumulado (kg)": 4,
+        "Custo de Racao Diario": 2,
+        "Custo de Racao Acumulado": 2,
         "TCA Diario": 4,
         "TCA Acumulado": 4,
         "GDP Diario (g/dia)": 4,
@@ -811,10 +935,8 @@ def executar(args: argparse.Namespace) -> Path:
     tanques = preparar_tanques(carregar_csv(input_dir / args.tanques))
     plantel = carregar_csv(input_dir / args.plantel)
     curvas = preparar_curvas(carregar_csv(input_dir / args.curvas))
+    racao = preparar_racao(carregar_csv(input_dir / args.racao))
     data_relatorio = parse_data_br(args.data_relatorio) if args.data_relatorio else date.today()
-
-    # racao.csv e carregado para validar a presenca da matriz descrita.
-    carregar_csv(input_dir / args.racao)
 
     resultado = simular_todos_lotes(
         plantel=plantel,
@@ -823,6 +945,7 @@ def executar(args: argparse.Namespace) -> Path:
         mostrar_erros=args.mostrar_erros,
         data_relatorio=data_relatorio,
     )
+    resultado = adicionar_custos_racao(resultado, racao, data_relatorio)
     resultado_br = formatar_relatorio(resultado)
 
     output = Path(args.output)
