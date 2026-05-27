@@ -2,7 +2,9 @@
 
 Simulador em Python para projetar o crescimento de lotes de peixes em tanques de cultivo, usando dados de plantel, tanques, curvas zootécnicas sazonais e tabela de ração.
 
-O script principal é [`simulador_aquicola.py`](./simulador_aquicola.py).
+O script principal é [`src/simulador_aquicola.py`](./src/simulador_aquicola.py).
+
+A interface gráfica em Streamlit fica em [`app/app.py`](./app/app.py).
 
 ## O que o simulador faz
 
@@ -99,22 +101,29 @@ Observação sobre `%PV`: nos arquivos atuais, valores como `0,0135` já represe
 
 ## Como utilizar
 
-Coloque os arquivos `tanques.csv`, `plantel.csv`, `curvas.csv` e `racao.csv` na mesma pasta do script e execute:
+Os arquivos de entrada ficam em `data/input/`. Para executar pela linha de comando:
 
 ```powershell
-python .\simulador_aquicola.py
+python .\src\simulador_aquicola.py --input-dir .\data\input --output "D:\mareterra\simulador\data\output\simulacao_completa_br.csv"
 ```
 
 Para usar os arquivos na área de trabalho e salvar o resultado também lá:
 
 ```powershell
-python .\simulador_aquicola.py --input-dir "C:\Users\gabriel\Desktop" --output "C:\Users\gabriel\Desktop\simulacao_completa_br.csv"
+python .\src\simulador_aquicola.py --input-dir "C:\Users\gabriel\Desktop" --output "C:\Users\gabriel\Desktop\simulacao_completa_br.csv"
 ```
 
 Para exibir mensagens sobre lotes ignorados por erro de dados:
 
 ```powershell
-python .\simulador_aquicola.py --input-dir "C:\Users\gabriel\Desktop" --mostrar-erros
+python .\src\simulador_aquicola.py --input-dir "C:\Users\gabriel\Desktop" --mostrar-erros
+```
+
+Para abrir a interface gráfica:
+
+```powershell
+pip install -r requirements.txt
+streamlit run .\app\app.py
 ```
 
 ## Parâmetros disponíveis
@@ -131,7 +140,7 @@ python .\simulador_aquicola.py --input-dir "C:\Users\gabriel\Desktop" --mostrar-
 
 ## Requisitos
 
-O simulador usa apenas a biblioteca padrão do Python. Não é necessário instalar Pandas, NumPy ou outras dependências.
+O simulador de linha de comando usa apenas a biblioteca padrão do Python. A interface gráfica usa Streamlit.
 
 Recomendado:
 

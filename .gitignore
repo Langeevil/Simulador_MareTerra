@@ -1,3 +1,7 @@
-simulacao_completa_br.csv
-LOGICA_SIMULADOR.md
-LOGICA_SIMULADOR.pdf
+__pycache__/
+*.pyc
+.venv/
+.env
+data/output/*.csv
+legacy/
+data/input/simulacao_completa_br.csv
