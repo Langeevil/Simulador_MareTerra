@@ -21,14 +21,15 @@ Durante a simulação, ele calcula:
 - GDP diário e acumulado;
 - mortalidade diária e mortalidade acumulada;
 - sobrevivência diária e acumulada;
-- marcadores de status: `Class 1`, `Class 2` e `Peixe Pronto`, preenchidos apenas no dia marcador da curva.
+- marcadores de status: `Class 1`, `Class 2`, `Peixe Pronto`, `Realizar Biometria` e `Tanque Disponivel`;
+- liberação e disponibilidade de tanques após vazio sanitário de 5 dias.
 
 O desempenho é ajustado por sazonalidade:
 
-- `Verão`: outubro a março;
-- `Inverno`: abril a setembro.
+- `Verão`: novembro a maio;
+- `Inverno`: junho a outubro.
 
-A estação é definida pela data de biometria do lote no `plantel.csv` (`Dt.últ Biometria`) e determina qual lado da curva será usado para `%PV`, mortalidade e GDP.
+A estação é avaliada pela data de cada dia simulado. Se o lote atravessar uma virada de estação, o simulador recalcula o dia equivalente na nova curva usando o peso atual do peixe.
 
 ## Arquivos de entrada
 
@@ -67,8 +68,10 @@ O relatório final é salvo como CSV diário no padrão brasileiro.
 Por padrão, o nome gerado é:
 
 ```text
-simulacao_completa_br.csv
+simulacao_completa_br_aaaammdd_hhmmss.csv
 ```
+
+O simulador sempre adiciona data e hora ao nome informado em `--output`. Assim, uma nova execução não substitui o relatório anterior e o diretório mantém um histórico dos arquivos gerados.
 
 A saída usa:
 
@@ -89,9 +92,9 @@ As principais métricas do relatório são calculadas assim:
 | Custo de Ração Diário | `Consumo de ração diário (kg) * Preço/kg da faixa de peso em racao.csv` |
 | Custo de Ração Acumulado | Soma dos custos diários por lote a partir da data do relatório. Antes dessa data, fica `0`. |
 | Mortalidade Diária | `Quantidade ativa no início do dia * (%mortalidade da curva / 100)` |
-| Mortalidade Acumulada (%) | `Mortos acumulados / quantidade inicial * 100` |
+| Mortalidade Acumulada (peixes) | Soma simples dos mortos diários desde o início do lote. |
 | GDP Diário | `Peso médio do dia - peso médio do dia anterior` |
-| GDP Acumulado | `Peso médio do dia - peso médio inicial` |
+| GDP Acumulado | `(Peso médio do dia - peso médio inicial) / dias de cultivo` |
 | TCA Diário | `Consumo diário / ganho de biomassa do dia` |
 | TCA Acumulado | `Consumo acumulado / ganho de biomassa acumulado` |
 
@@ -126,6 +129,30 @@ pip install -r requirements.txt
 streamlit run .\app\app.py
 ```
 
+A interface também gera um relatório gerencial em Excel com abas `APT`, `ITA` e `Consolidado APT + ITA`, além de uma auditoria opcional de fórmulas para planilhas `.xlsx`.
+
+Na tabela gerencial da interface:
+
+- As colunas mensais começam no próprio mês da `Data do relatório`.
+- `PO Atualizado` usa exatamente o valor informado em `PO Diário APT (kg)` ou `PO Diário ITA (kg)`.
+- `Abate PO Atualizado Total Mês` é calculado por `PO Diário * número real de dias do mês da coluna`.
+- `Saldo Acm Atualizado / mês` acumula, mês a mês, `Previsão Disponibilidade Total - Abate PO Atualizado Total Mês`.
+- As tabelas exibidas na tela usam destaque visual para blocos, totais, saldos e marcos de gestão, sem casas decimais.
+- Os gráficos usam o eixo X como mês e o eixo Y como volume projetado, com curvas ligadas diretamente às linhas numéricas da tabela.
+- Quando o nome de saída não contém pasta, a interface salva o CSV em `data/output/` com data e hora no nome.
+
+Para gerar um pacote executável local no Windows:
+
+```powershell
+.\build_exe.ps1
+```
+
+O arquivo será criado em:
+
+```text
+dist\SimuladorBiomassa\SimuladorBiomassa.exe
+```
+
 ## Parâmetros disponíveis
 
 | Parâmetro | Padrão | Uso |
@@ -137,6 +164,7 @@ streamlit run .\app\app.py
 | `--racao` | `racao.csv` | Nome do arquivo de ração. |
 | `--output` | `simulacao_completa_br.csv` | Caminho ou nome do arquivo final. |
 | `--mostrar-erros` | desativado | Mostra inconsistências encontradas em lotes individuais. |
+| `--plantel-nova-geracao-output` | vazio | Gera um CSV opcional com tanques disponíveis para novo povoamento. |
 
 ## Requisitos
 

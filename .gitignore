@@ -5,3 +5,9 @@ __pycache__/
 data/output/*.csv
 legacy/
 data/input/simulacao_completa_br.csv
+streamlit_app_*.log
+build/
+dist/
+*.spec
+build_exe.ps1
+launcher.py

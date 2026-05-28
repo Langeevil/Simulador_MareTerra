@@ -16,6 +16,8 @@ PESO_DESPESCA_G = 900.0
 LIMITE_DIAS = 730
 FATOR_AJUSTE_PEIXE_PRONTO = 0.84
 MARCADOR_PEIXE_PRONTO = "pronto"
+VAZIO_SANITARIO_DIAS = 5
+DIAS_BIOMETRIA = {20, 41, 94, 300}
 
 
 SAIDA_COLUNAS = [
@@ -51,6 +53,15 @@ ALIASES_PLANTEL = {
     "tanque": ["tanque", "id tanque", "tanque id", "estrutura", "viveiro"],
     "regiao": ["regiao", "regiao produtor", "localidade", "area"],
     "classe": ["classe", "classificacao", "tipo", "categoria"],
+    "cluster": [
+        "cluster",
+        "perfil",
+        "perfil produtor",
+        "perfil de produtor",
+        "perfil tecnologico",
+        "tecnologia",
+        "nivel tecnologico",
+    ],
     "quantidade": [
         "quantidade de peixes",
         "quantidade inicial de peixes",
@@ -92,6 +103,15 @@ ALIASES_PLANTEL = {
 ALIASES_CURVAS = {
     "dia": ["dia", "dia ciclo", "dia_ciclo", "dc", "dias", "idade"],
     "estacao": ["estacao", "sazonalidade", "periodo", "epoca"],
+    "cluster": [
+        "cluster",
+        "perfil",
+        "perfil produtor",
+        "perfil de produtor",
+        "perfil tecnologico",
+        "tecnologia",
+        "nivel tecnologico",
+    ],
     "peso_ref": [
         "peso medio",
         "peso medio g",
@@ -185,6 +205,7 @@ class Lote:
     tanque: str
     regiao: str
     classe: str
+    cluster: str
     quantidade: float
     peso_medio_g: float
     data_alojamento: date
@@ -275,7 +296,7 @@ def parse_data_br(valor: object) -> date:
 
 
 def detectar_estacao(data_ref: date) -> str:
-    return "V" if data_ref.month in {10, 11, 12, 1, 2, 3} else "I"
+    return "V" if data_ref.month in {11, 12, 1, 2, 3, 4, 5} else "I"
 
 
 def normalizar_estacao(valor: object) -> str:
@@ -285,6 +306,28 @@ def normalizar_estacao(valor: object) -> str:
     if texto.startswith("i"):
         return "I"
     return texto[:1].upper()
+
+
+def normalizar_cluster(valor: object) -> str:
+    texto = normalizar_nome(valor)
+    if not texto:
+        return "Media Tecnologia"
+    if "alta" in texto or "alto" in texto:
+        return "Alta Tecnologia"
+    if "baixa" in texto or "baixo" in texto:
+        return "Baixa Tecnologia"
+    if "media" in texto or "medio" in texto:
+        return "Media Tecnologia"
+    return str(valor).strip()
+
+
+def fator_cluster_lote(lote: Lote) -> float:
+    cluster = normalizar_nome(lote.cluster)
+    if "alta" in cluster:
+        return 1.05
+    if "baixa" in cluster:
+        return 0.92
+    return 1.0
 
 
 def definir_status_base(peso_medio_g: float) -> str:
@@ -314,6 +357,9 @@ def preparar_curvas(tabela: CsvTable) -> list[Curva]:
     col_estacao = encontrar_coluna(
         tabela.headers, ALIASES_CURVAS["estacao"], contexto="curvas.csv"
     )
+    col_cluster = encontrar_coluna(
+        tabela.headers, ALIASES_CURVAS["cluster"], obrigatoria=False, contexto="curvas.csv"
+    )
     col_peso = encontrar_coluna(tabela.headers, ALIASES_CURVAS["peso_ref"], contexto="curvas.csv")
     col_gdp = encontrar_coluna(tabela.headers, ALIASES_CURVAS["gdp"], contexto="curvas.csv")
     col_mort = encontrar_coluna(
@@ -341,6 +387,7 @@ def preparar_curvas(tabela: CsvTable) -> list[Curva]:
             {
                 "dia": int(round(dia)),
                 "estacao": normalizar_estacao(row[col_estacao]),
+                "cluster": normalizar_cluster(row[col_cluster]) if col_cluster else "",
                 "peso_ref_g": peso,
                 "gdp_g": gdp,
                 "mortalidade_pct": mortalidade,
@@ -403,6 +450,7 @@ def preparar_curvas_largas(tabela: CsvTable) -> list[Curva]:
                 {
                     "dia": int(round(dia)),
                     "estacao": estacao,
+                    "cluster": "",
                     "peso_ref_g": peso,
                     "gdp_g": gdp,
                     "mortalidade_pct": mortalidade,
@@ -532,7 +580,7 @@ def colunas_plantel(tabela: CsvTable) -> dict[str, str | None]:
         chave: encontrar_coluna(
             tabela.headers,
             aliases,
-            obrigatoria=chave not in {"produtor", "regiao", "classe"},
+            obrigatoria=chave not in {"produtor", "regiao", "classe", "cluster"},
             contexto="plantel.csv",
         )
         for chave, aliases in ALIASES_PLANTEL.items()
@@ -552,6 +600,7 @@ def lote_da_linha(
     produtor = str(linha[colunas["produtor"]]).strip() if colunas.get("produtor") else ""
     regiao = str(linha[colunas["regiao"]]).strip() if colunas.get("regiao") else ""
     classe = str(linha[colunas["classe"]]).strip() if colunas.get("classe") else ""
+    cluster = normalizar_cluster(linha[colunas["cluster"]]) if colunas.get("cluster") else "Media Tecnologia"
 
     cadastro = tanques.get(tanque, {})
     regiao = regiao or cadastro.get("regiao", "")
@@ -569,23 +618,44 @@ def lote_da_linha(
         tanque=tanque,
         regiao=regiao,
         classe=classe,
+        cluster=cluster,
         quantidade=quantidade,
         peso_medio_g=peso_medio_g,
         data_alojamento=data_alojamento,
     )
 
 
-def determinar_dia_ciclo(peso_medio_g: float, curvas: list[Curva], estacao_atual: str) -> int:
-    subset = [c for c in curvas if c["estacao"] == estacao_atual] or curvas
+def curvas_por_estacao_cluster(curvas: list[Curva], estacao: str, cluster: str = "") -> list[Curva]:
+    subset_estacao = [c for c in curvas if c["estacao"] == estacao] or curvas
+    cluster_normalizado = normalizar_cluster(cluster) if cluster else ""
+    if cluster_normalizado:
+        subset_cluster = [
+            c
+            for c in subset_estacao
+            if normalizar_cluster(c.get("cluster", "")) == cluster_normalizado
+        ]
+        if subset_cluster:
+            return subset_cluster
+    return subset_estacao
+
+
+def determinar_dia_ciclo(
+    peso_medio_g: float,
+    curvas: list[Curva],
+    estacao_atual: str,
+    cluster: str = "",
+) -> int:
+    subset = curvas_por_estacao_cluster(curvas, estacao_atual, cluster)
     curva = min(subset, key=lambda c: abs(float(c["peso_ref_g"]) - peso_medio_g))
     return int(curva["dia"])
 
 
-def linha_curva(curvas: list[Curva], estacao: str, dia_ciclo: int) -> Curva:
+def linha_curva(curvas: list[Curva], estacao: str, dia_ciclo: int, cluster: str = "") -> Curva:
     cache = getattr(linha_curva, "_cache", {})
-    cache_key = (id(curvas), estacao)
+    cluster_normalizado = normalizar_cluster(cluster) if cluster else ""
+    cache_key = (id(curvas), estacao, cluster_normalizado)
     if cache_key not in cache:
-        subset = [c for c in curvas if c["estacao"] == estacao] or curvas
+        subset = curvas_por_estacao_cluster(curvas, estacao, cluster_normalizado)
         subset = sorted(subset, key=lambda c: int(c["dia"]))
         cache[cache_key] = ([int(c["dia"]) for c in subset], subset)
         setattr(linha_curva, "_cache", cache)
@@ -610,7 +680,7 @@ def normalizar_marcador_status(valor: object) -> str:
     return ""
 
 
-def definir_status(peso_medio_g: float, curva: Curva | None = None) -> str:
+def definir_status(peso_medio_g: float, curva: Curva | None = None, dias_cultivo: int | None = None) -> str:
     peso_medio_g = round(float(peso_medio_g), 2)
     if peso_medio_g >= PESO_DESPESCA_G:
         return "Peixe Pronto"
@@ -620,23 +690,29 @@ def definir_status(peso_medio_g: float, curva: Curva | None = None) -> str:
         return "Class 1"
     if curva is None:
         return ""
-    return normalizar_marcador_status(curva.get("marco", ""))
+    marcador = normalizar_marcador_status(curva.get("marco", ""))
+    if marcador:
+        return marcador
+    if dias_cultivo in DIAS_BIOMETRIA:
+        return "Realizar Biometria"
+    return ""
 
 
 def curva_marca_peixe_pronto(curva: Curva) -> bool:
     return normalizar_marcador_status(curva.get("marco", "")) == "Peixe Pronto"
 
 
-def peso_marcador_peixe_pronto(curvas: list[Curva], estacao: str) -> float:
+def peso_marcador_peixe_pronto(curvas: list[Curva], estacao: str, cluster: str = "") -> float:
     cache = getattr(peso_marcador_peixe_pronto, "_cache", {})
-    cache_key = (id(curvas), estacao)
+    cluster_normalizado = normalizar_cluster(cluster) if cluster else ""
+    cache_key = (id(curvas), estacao, cluster_normalizado)
     if cache_key in cache:
         return cache[cache_key]
 
     candidatos = [
         float(curva["peso_ref_g"])
-        for curva in curvas
-        if curva["estacao"] == estacao and curva_marca_peixe_pronto(curva)
+        for curva in curvas_por_estacao_cluster(curvas, estacao, cluster_normalizado)
+        if curva_marca_peixe_pronto(curva)
     ]
     peso = min(candidatos) if candidatos else PESO_DESPESCA_G
     cache[cache_key] = peso
@@ -644,8 +720,16 @@ def peso_marcador_peixe_pronto(curvas: list[Curva], estacao: str) -> float:
     return peso
 
 
-def atingiu_peixe_pronto(pm_real: float, curva: Curva, curvas: list[Curva], estacao: str) -> bool:
-    return curva_marca_peixe_pronto(curva) or pm_real >= peso_marcador_peixe_pronto(curvas, estacao)
+def atingiu_peixe_pronto(
+    pm_real: float,
+    curva: Curva,
+    curvas: list[Curva],
+    estacao: str,
+    cluster: str = "",
+) -> bool:
+    return curva_marca_peixe_pronto(curva) or pm_real >= peso_marcador_peixe_pronto(
+        curvas, estacao, cluster
+    )
 
 
 def fator_regional_lote(lote: Lote) -> float:
@@ -674,6 +758,8 @@ def adicionar_registro(
     mort_diaria_abs: float,
     mort_acumulada_abs: float,
     status: str,
+    tanque_liberado: int = 0,
+    tanque_disponivel: int = 0,
 ) -> None:
     # Sobrevivencia %
     # Sobrevivencia Acumulada (%) = (Qtd Atual / Qtd Inicial) * 100
@@ -704,8 +790,8 @@ def adicionar_registro(
             "Status": status,
             "Regiao": lote.regiao,
             "Classe": lote.classe,
-            "Tanques Liberados": "",
-            "Tanques Disponivel": "",
+            "Tanques Liberados": tanque_liberado,
+            "Tanques Disponivel": tanque_disponivel,
         }
     )
 
@@ -721,8 +807,8 @@ def simular_lote(
 
     data_relatorio = data_relatorio or date.today()
     data_inicial = lote.data_alojamento
-    estacao_lote = detectar_estacao(data_inicial)
-    fator_regional = fator_regional_lote(lote)
+    estacao_atual = detectar_estacao(data_inicial)
+    fator_desempenho = fator_regional_lote(lote) * fator_cluster_lote(lote)
 
     q = lote.quantidade
     qi = lote.quantidade
@@ -734,11 +820,12 @@ def simular_lote(
 
     ca_kg = 0.0
     mort_acumulada_abs = 0.0
-    dc = determinar_dia_ciclo(pi, curvas, estacao_lote)
-    curva_inicial = linha_curva(curvas, estacao_lote, dc)
+    dc = determinar_dia_ciclo(pi, curvas, estacao_atual, lote.cluster)
+    curva_inicial = linha_curva(curvas, estacao_atual, dc, lote.cluster)
     data_atual = data_inicial
     registros: list[dict[str, object]] = []
     peixe_pronto_no_historico = False
+    data_liberacao: date | None = None
 
     adicionar_registro(
         registros,
@@ -756,17 +843,18 @@ def simular_lote(
         0.0,
         0.0,
         0.0,
-        definir_status(pi, curva_inicial),
+        definir_status(pi, curva_inicial, 0),
     )
 
     def simular_um_dia(data_dia: date, registrar: bool) -> None:
         nonlocal q, pm_real, pm_relatorio, bm_anterior, ca_kg
-        nonlocal mort_acumulada_abs, dc, peixe_pronto_no_historico
+        nonlocal mort_acumulada_abs, dc, peixe_pronto_no_historico, estacao_atual, data_liberacao
 
-        # A coluna da curva (%PV, GDP e mortalidade) e definida pela estacao
-        # da data de biometria no plantel, nao pela data projetada.
-        estacao = estacao_lote
-        curva = linha_curva(curvas, estacao, dc)
+        estacao = detectar_estacao(data_dia)
+        if estacao != estacao_atual:
+            dc = determinar_dia_ciclo(pm_real, curvas, estacao, lote.cluster)
+            estacao_atual = estacao
+        curva = linha_curva(curvas, estacao, dc, lote.cluster)
         pm_relatorio_anterior = pm_relatorio
         bm_anterior_dia = bm_anterior
 
@@ -774,15 +862,15 @@ def simular_lote(
         q = max(q - mortos_dia, 0.0)
         mort_acumulada_abs += mortos_dia
 
-        pm_real += float(curva["gdp_g"]) * fator_regional
-        if atingiu_peixe_pronto(pm_real, curva, curvas, estacao):
+        pm_real += float(curva["gdp_g"]) * fator_desempenho
+        if atingiu_peixe_pronto(pm_real, curva, curvas, estacao, lote.cluster):
             peixe_pronto_no_historico = True
 
         ajuste_aplicado = registrar and data_dia == data_relatorio and peixe_pronto_no_historico
         pm_relatorio = pm_real * FATOR_AJUSTE_PEIXE_PRONTO if ajuste_aplicado else pm_real
         bm = q * pm_relatorio / 1000.0
 
-        pv_rate = normalizar_taxa_pv(curva["pv"]) * fator_regional
+        pv_rate = normalizar_taxa_pv(curva["pv"]) * fator_desempenho
         racao_dia_kg = bm * pv_rate
         ca_kg += racao_dia_kg
 
@@ -794,7 +882,12 @@ def simular_lote(
 
         if registrar:
             dias_totais = (data_dia - data_inicial).days + 1
+            dias_cultivo = max((data_dia - data_inicial).days, 1)
             semana_num = ((dias_totais - 1) // 7) + 1
+            status = definir_status(pm_relatorio, curva, dias_cultivo)
+            tanque_liberado = 1 if status == "Peixe Pronto" and data_liberacao is None else 0
+            if tanque_liberado:
+                data_liberacao = data_dia
             adicionar_registro(
                 registros,
                 lote,
@@ -808,10 +901,12 @@ def simular_lote(
                 tca_diario,
                 tca_ac,
                 gdp_diario,
-                pm_relatorio - pi,
+                (pm_relatorio - pi) / dias_cultivo,
                 mortos_dia,
                 mort_acumulada_abs,
-                definir_status(pm_relatorio, curva),
+                status,
+                tanque_liberado,
+                0,
             )
 
         bm_anterior = bm
@@ -837,6 +932,32 @@ def simular_lote(
     ):
         data_atual += timedelta(days=1)
         simular_um_dia(data_atual, registrar=True)
+
+    if data_liberacao is not None:
+        for dia_vazio in range(1, VAZIO_SANITARIO_DIAS + 1):
+            data_vazio = data_liberacao + timedelta(days=dia_vazio)
+            dias_totais = (data_vazio - data_inicial).days + 1
+            semana_num = ((dias_totais - 1) // 7) + 1
+            adicionar_registro(
+                registros,
+                lote,
+                data_vazio,
+                semana_num,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                ca_kg,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                mort_acumulada_abs,
+                "Tanque Disponivel" if dia_vazio == VAZIO_SANITARIO_DIAS else "",
+                0,
+                1 if dia_vazio == VAZIO_SANITARIO_DIAS else 0,
+            )
 
     return registros
 
@@ -900,12 +1021,17 @@ def formatar_relatorio(registros: list[dict]) -> list[dict[str, object]]:
         "TCA Acumulado": 4,
         "GDP Diario (g/dia)": 4,
         "GDP Acumulado (g)": 4,
-        "Mortalidade Diaria (peixes)": 2,
-        "Mortalidade Acumulada (peixes)": 2,
         "Sobrevivencia Diaria (%)": 2,
         "Sobrevivencia Acumulada (%)": 2,
     }
-    colunas_inteiras = {"Semana", "Quantidade de Peixes"}
+    colunas_inteiras = {
+        "Semana",
+        "Quantidade de Peixes",
+        "Mortalidade Diaria (peixes)",
+        "Mortalidade Acumulada (peixes)",
+        "Tanques Liberados",
+        "Tanques Disponivel",
+    }
 
     for registro in registros:
         linha = {}
@@ -924,10 +1050,68 @@ def formatar_relatorio(registros: list[dict]) -> list[dict[str, object]]:
 
 
 def salvar_csv(caminho: Path, registros: list[dict[str, object]]) -> None:
+    caminho.parent.mkdir(parents=True, exist_ok=True)
     with caminho.open("w", encoding="utf-8-sig", newline="") as arquivo:
         writer = csv.DictWriter(arquivo, fieldnames=SAIDA_COLUNAS, delimiter=";")
         writer.writeheader()
         writer.writerows(registros)
+
+
+def adicionar_timestamp_arquivo(caminho: Path, momento: datetime | None = None) -> Path:
+    momento = momento or datetime.now()
+    sufixo = momento.strftime("%Y%m%d_%H%M%S")
+    return caminho.with_name(f"{caminho.stem}_{sufixo}{caminho.suffix}")
+
+
+def salvar_plantel_nova_geracao(caminho: Path, registros: list[dict[str, object]]) -> None:
+    """Exporta um plantel-base com tanques disponíveis para novo povoamento."""
+    disponiveis: dict[str, dict[str, object]] = {}
+    for registro in registros:
+        if int(registro.get("Tanques Disponivel") or 0) != 1:
+            continue
+        tanque = str(registro.get("Tanque", "")).strip()
+        if not tanque:
+            continue
+        data_registro = registro.get("Data")
+        atual = disponiveis.get(tanque)
+        if atual is None or data_registro < atual["Data Disponivel"]:
+            disponiveis[tanque] = {
+                "Produtor": "",
+                "Tanque": tanque,
+                "Data Entrada": data_registro,
+                "Saldo Final": 0,
+                "Dt.últ Biometria": data_registro,
+                "Última Pesagem(g)": 0,
+                "Região": registro.get("Regiao", ""),
+                "Classe": registro.get("Classe", ""),
+                "Status Planejamento": "Disponivel para novo povoamento",
+                "Data Disponivel": data_registro,
+            }
+
+    fieldnames = [
+        "Produtor",
+        "Tanque",
+        "Data Entrada",
+        "Saldo Final",
+        "Dt.últ Biometria",
+        "Última Pesagem(g)",
+        "Região",
+        "Classe",
+        "Status Planejamento",
+    ]
+    linhas = []
+    for item in sorted(disponiveis.values(), key=lambda row: (row["Data Disponivel"], row["Tanque"])):
+        linha = {campo: item.get(campo, "") for campo in fieldnames}
+        for campo in ["Data Entrada", "Dt.últ Biometria"]:
+            if isinstance(linha[campo], date):
+                linha[campo] = linha[campo].strftime("%d/%m/%Y")
+        linhas.append(linha)
+
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    with caminho.open("w", encoding="utf-8-sig", newline="") as arquivo:
+        writer = csv.DictWriter(arquivo, fieldnames=fieldnames, delimiter=";")
+        writer.writeheader()
+        writer.writerows(linhas)
 
 
 def executar(args: argparse.Namespace) -> Path:
@@ -937,6 +1121,7 @@ def executar(args: argparse.Namespace) -> Path:
     curvas = preparar_curvas(carregar_csv(input_dir / args.curvas))
     racao = preparar_racao(carregar_csv(input_dir / args.racao))
     data_relatorio = parse_data_br(args.data_relatorio) if args.data_relatorio else date.today()
+    momento_geracao = datetime.now()
 
     resultado = simular_todos_lotes(
         plantel=plantel,
@@ -946,11 +1131,19 @@ def executar(args: argparse.Namespace) -> Path:
         data_relatorio=data_relatorio,
     )
     resultado = adicionar_custos_racao(resultado, racao, data_relatorio)
+    plantel_nova_geracao = getattr(args, "plantel_nova_geracao_output", "")
+    if plantel_nova_geracao:
+        plantel_output = Path(plantel_nova_geracao)
+        if not plantel_output.is_absolute() and plantel_output.parent == Path("."):
+            plantel_output = input_dir / plantel_output
+        plantel_output = adicionar_timestamp_arquivo(plantel_output, momento_geracao)
+        salvar_plantel_nova_geracao(plantel_output, resultado)
     resultado_br = formatar_relatorio(resultado)
 
     output = Path(args.output)
-    if not output.is_absolute():
+    if not output.is_absolute() and output.parent == Path("."):
         output = input_dir / output
+    output = adicionar_timestamp_arquivo(output, momento_geracao)
     salvar_csv(output, resultado_br)
     return output
 
@@ -978,6 +1171,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--data-relatorio",
         default="",
         help="Data de geracao do relatorio no formato dd/mm/aaaa ou aaaa-mm-dd. Padrao: hoje.",
+    )
+    parser.add_argument(
+        "--plantel-nova-geracao-output",
+        default="",
+        help="CSV opcional com tanques disponiveis para planejamento de novo povoamento.",
     )
     return parser
 
