@@ -34,6 +34,7 @@ SAIDA_COLUNAS = [
     "Consumo de Racao Acumulado (kg)",
     "Custo de Racao Diario",
     "Custo de Racao Acumulado",
+    "Ganho de Biomassa Acumulado (kg)",
     "TCA Diario",
     "TCA Acumulado",
     "GDP Diario (g/dia)",
@@ -802,6 +803,7 @@ def adicionar_registro(
     status: str,
     tanque_liberado: int = 0,
     tanque_disponivel: int = 0,
+    ganho_bm_acumulado: float = 0.0,
 ) -> None:
     # Sobrevivencia %
     # Sobrevivencia Acumulada (%) = (Qtd Atual / Qtd Inicial) * 100
@@ -821,6 +823,7 @@ def adicionar_registro(
             "Biomassa (kg)": bm_atual,
             "Consumo de Racao Diario (kg)": cr_diario,
             "Consumo de Racao Acumulado (kg)": cr_acumulado,
+            "Ganho de Biomassa Acumulado (kg)": ganho_bm_acumulado,
             "TCA Diario": tca_diario,
             "TCA Acumulado": tca_acumulado,
             "GDP Diario (g/dia)": gdp_diario,
@@ -959,6 +962,7 @@ def simular_lote(
                 status,
                 tanque_liberado,
                 0,
+                ganho_bm_total,
             )
 
         bm_anterior = bm
@@ -1009,6 +1013,7 @@ def simular_lote(
                 "Tanque Disponivel" if dia_vazio == VAZIO_SANITARIO_DIAS else "",
                 0,
                 1 if dia_vazio == VAZIO_SANITARIO_DIAS else 0,
+                0.0,
             )
 
     return registros
@@ -1070,6 +1075,7 @@ def formatar_relatorio(registros: list[dict]) -> list[dict[str, object]]:
         "Consumo de Racao Acumulado (kg)": 4,
         "Custo de Racao Diario": 2,
         "Custo de Racao Acumulado": 2,
+        "Ganho de Biomassa Acumulado (kg)": 2,
         "TCA Diario": 4,
         "TCA Acumulado": 4,
         "GDP Diario (g/dia)": 4,

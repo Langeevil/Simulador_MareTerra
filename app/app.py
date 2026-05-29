@@ -172,6 +172,7 @@ def clean_and_prepare_dataframe(csv_bytes: bytes) -> pd.DataFrame:
             'consumo de ração na fase (kg)': 'consumo_racao_na_fase_kg',
             'consumo de racao acumulado (kg)': 'consumo_racao_acumulado_kg',
             'consumo de ração acumulado (kg)': 'consumo_racao_acumulado_kg',
+            'ganho de biomassa acumulado (kg)': 'ganho_biomassa_acumulado_kg',
             'mortalidade acumulada (peixes)': 'mortalidade_acumulada_peixes',
             'mortalidade diaria (peixes)': 'mortalidade_diaria_peixes',
             'tanques disponivel': 'tanques_disponivel',
@@ -199,6 +200,7 @@ def clean_and_prepare_dataframe(csv_bytes: bytes) -> pd.DataFrame:
         for numeric_col in [
             'consumo_racao_diario_kg',
             'consumo_racao_acumulado_kg',
+            'ganho_biomassa_acumulado_kg',
             'mortalidade_acumulada_peixes',
             'mortalidade_diaria_peixes',
         ]:
