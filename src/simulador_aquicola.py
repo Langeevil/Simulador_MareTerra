@@ -933,6 +933,11 @@ def simular_lote(
             dias_cultivo = max((data_dia - data_inicial).days, 1)
             semana_num = ((dias_totais - 1) // 7) + 1
             status = definir_status(pm_relatorio, curva, dias_cultivo)
+            
+            # Fórmula explícita do GDP Acumulado para rastreabilidade
+            ganho_peso_total = pm_relatorio - pi
+            gdp_acumulado = ganho_peso_total / dias_cultivo
+            
             if status != "Peixe Pronto":
                 if not class2_disparado and pm_relatorio >= 120.0:
                     status = "Class 2"
@@ -956,7 +961,7 @@ def simular_lote(
                 tca_diario,
                 tca_ac,
                 gdp_diario,
-                (pm_relatorio - pi) / dias_cultivo,
+                gdp_acumulado,
                 mortos_dia,
                 mort_acumulada_abs,
                 status,

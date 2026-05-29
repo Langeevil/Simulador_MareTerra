@@ -718,18 +718,18 @@ def render_line_chart(chart_df: pd.DataFrame, title: str, y_title: str) -> None:
         alt.Chart(chart_data)
         .mark_line(point=True, strokeWidth=2.5)
         .encode(
-            x=alt.X("Mês:N", title="Mês", sort=None),
-            y=alt.Y("Valor:Q", title=y_title),
+            x=alt.X("Mês:O", title="Mês / Tempo", sort=None, axis=alt.Axis(labelAngle=0)),
+            y=alt.Y("Valor:Q", title=y_title, scale=alt.Scale(zero=False)),
             color=alt.Color(
                 "Indicador:N",
-                title="Indicador",
-                scale=alt.Scale(range=[BRAND_GREEN, BRAND_GOLD, "#5F6B7A"]),
-                legend=alt.Legend(orient="left"),
+                title="Série",
+                scale=alt.Scale(range=[BRAND_GREEN, BRAND_GOLD, "rgba(23, 65, 59, 0.6)"]),
+                legend=alt.Legend(orient="bottom", direction="horizontal", titleFontSize=12, labelFontSize=12),
             ),
             tooltip=[
-                alt.Tooltip("Mês:N", title="Mês"),
-                alt.Tooltip("Indicador:N", title="Indicador"),
-                alt.Tooltip("Valor:Q", title="Valor", format=",.2f"),
+                alt.Tooltip("Mês:O", title="Mês"),
+                alt.Tooltip("Indicador:N", title="Série"),
+                alt.Tooltip("Valor:Q", title=y_title, format=",.2f"),
             ],
         )
         .properties(title=title, height=320)
@@ -749,56 +749,57 @@ def styled_report_dataframe(df: pd.DataFrame) -> pd.io.formats.style.Styler:
 
         if not label.strip():
             return ["background-color: transparent;"] * size
-        if "próprio" in label or "proprio" in label:
-            return [
-                "background-color: #D9EAF7; color: #0F3048; font-weight: 800;"
-            ] * size
-        if "integração" in label or "integracao" in label:
-            return [
-                "background-color: #F6E0BF; color: #5C3300; font-weight: 800;"
-            ] * size
-        if "parceria" in label:
-            return [
-                "background-color: #DCEFE2; color: #17413B; font-weight: 800;"
-            ] * size
-        if label == "dias de abate":
-            return [
-                "background-color: #F1D6D6; color: #5A1515; font-weight: 900;"
-            ] * size
-        if "quadro" in label:
-            return [
-                "background-color: #76581E; color: #FFFFFF; font-weight: 800;"
-            ] * size
-        if label in {"apt", "itaporã", "itapora"}:
-            return [
-                "background-color: #66706E; color: #FFFFFF; font-weight: 800;"
-            ] * size
+            
         if "previsão disponibilidade total" in label or "previsao disponibilidade total" in label:
             return [
-                "background-color: #5E6F6B; color: #FFFFFF; font-weight: 900;"
+                "background-color: #17413B; color: #FFFFFF; font-weight: 900; border-top: 2px solid #BC933F;"
             ] * size
         if "abate po atualizado total" in label:
             return [
-                "background-color: #E7D8B5; color: #17413B; font-weight: 900;"
+                "background-color: #BC933F; color: #111827; font-weight: 900; border-bottom: 2px solid #17413B;"
+            ] * size
+        if "próprio" in label or "proprio" in label:
+            return [
+                "background-color: #17413B; color: #FFFFFF; font-weight: 800;"
+            ] * size
+        if "integração" in label or "integracao" in label:
+            return [
+                "background-color: #BC933F; color: #111827; font-weight: 800;"
+            ] * size
+        if "parceria" in label:
+            return [
+                "background-color: rgba(23, 65, 59, 0.6); color: #111827; font-weight: 800;"
+            ] * size
+        if label == "dias de abate":
+            return [
+                "background-color: #BC933F; color: #111827; font-weight: 900;"
+            ] * size
+        if "quadro" in label:
+            return [
+                "background-color: rgba(23, 65, 59, 0.85); color: #FFFFFF; font-weight: 800;"
+            ] * size
+        if label in {"apt", "itaporã", "itapora"}:
+            return [
+                "background-color: rgba(188, 147, 63, 0.85); color: #111827; font-weight: 800;"
             ] * size
         if "total" in label:
             return [
-                "background-color: #66706E; color: #FFFFFF; font-weight: 800;"
+                "background-color: rgba(23, 65, 59, 0.15); color: #111827; font-weight: 800;"
             ] * size
         if "saldo" in label:
             return [
-                "background-color: #F3E6C8; color: #17413B; font-weight: 800;"
+                "background-color: rgba(188, 147, 63, 0.2); color: #111827; font-weight: 800;"
             ] * size
         if label in {"po", "po atualizado"} or "po atualizado" in label:
             return [
-                "background-color: #E7D8B5; color: #17413B; font-weight: 800;"
+                "background-color: rgba(188, 147, 63, 0.15); color: #111827; font-weight: 800;"
             ] * size
         if any(marker in label for marker in ["biometria", "liberado", "disponivel", "disponível"]):
             return [
-                "background-color: #E7D8B5; color: #17413B; font-weight: 800;"
+                "background-color: rgba(23, 65, 59, 0.15); color: #111827; font-weight: 800;"
             ] * size
         if isinstance(row.name, int) and row.name % 2 == 0:
-            return ["background-color: #F7F7F7; color: #111827;"] * size
+            return ["background-color: rgba(188, 147, 63, 0.1); color: #111827;"] * size
         return ["background-color: #FFFFFF; color: #111827;"] * size
 
     return (
@@ -806,9 +807,10 @@ def styled_report_dataframe(df: pd.DataFrame) -> pd.io.formats.style.Styler:
         .set_properties(
             subset=["Conteúdo / Bloco"],
             **{
-                "min-width": "300px",
-                "max-width": "420px",
+                "min-width": "350px",
+                "max-width": "450px",
                 "white-space": "normal",
+                "word-wrap": "break-word",
                 "font-weight": "700",
             },
         )
@@ -820,7 +822,8 @@ def styled_report_dataframe(df: pd.DataFrame) -> pd.io.formats.style.Styler:
                         ("background-color", "#17413B"),
                         ("color", "#FFFFFF"),
                         ("font-weight", "800"),
-                        ("border-color", "#BC933F"),
+                        ("text-align", "center"),
+                        ("border-bottom", "3px solid #BC933F"),
                     ],
                 }
             ]
