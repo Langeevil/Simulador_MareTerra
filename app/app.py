@@ -93,7 +93,7 @@ def configure_page() -> None:
         page_title="Simulador Aquícola",
         page_icon=str(LOGO_WHITE) if LOGO_WHITE.exists() else "🐟",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="collapsed",
     )
     st.markdown(
         """
@@ -116,6 +116,18 @@ def configure_page() -> None:
         .stButton > button { background: #17413B; color: #FFFFFF; border-color: #BC933F; font-weight: bold; }
         .stButton > button:hover { background: #102F2B; border-color: #A97F2E; color: #FFFFFF; }
         .stDownloadButton > button { width: 100%; background: #17413B; border-color: #BC933F; color: #FFFFFF; }
+        
+        /* Refinamento Visual das Abas (Tabs) para Padrão Executivo */
+        .stTabs [data-baseweb="tab-list"] { gap: 10px; border-bottom: 1px solid #E7D8B5; }
+        .stTabs [data-baseweb="tab"] { 
+            height: 50px; padding: 0 16px; background-color: transparent; 
+            border-radius: 6px 6px 0 0; color: #5C6470; font-weight: 600; 
+            transition: all 0.2s ease-in-out;
+        }
+        .stTabs [aria-selected="true"] { 
+            background-color: rgba(188, 147, 63, 0.15) !important; 
+            color: #17413B !important; border-bottom: 3px solid #17413B !important; 
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -1088,7 +1100,7 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
         )
     
     tab_apt, tab_ita, tab_consolidado = st.tabs(
-        ["Aba APT (Aparecida do Taboado)", "Aba ITA (Itaporã)", "Consolidado APT + ITA"]
+        ["🏭 APT (Aparecida do Taboado)", "🏭 ITA (Itaporã)", "📊 Consolidado APT + ITA"]
     )
     with tab_apt:
         chart_apt = dataframe_for_chart(
@@ -1159,18 +1171,6 @@ def main() -> None:
     configure_page()
     render_header()
 
-    with st.sidebar:
-        if LOGO_BLACK.exists(): st.image(str(LOGO_BLACK), use_container_width=True)
-        st.header("Fluxo de Trabalho")
-        st.markdown(
-            """
-            1. Ajuste **Metas e Lançamentos** Manuais.
-            2. Insira os CSVs de base.
-            3. Clique em **Executar Simulação**.
-            4. Baixe o relatório consolidado pronto para diretoria.
-            """
-        )
-
     data_relatorio, output_name, mostrar_erros = render_common_settings()
 
     # Controles Interativos (Salvos no Session State)
@@ -1193,7 +1193,7 @@ def main() -> None:
     st.session_state["meses_visiveis"] = meses_visiveis
     render_spreadsheet_audit()
 
-    tab_upload, tab_path = st.tabs(["📤 Upload de Arquivos", "📁 Execução Local"])
+    tab_upload, tab_path = st.tabs(["📤 Upload de Arquivos", "💻 Execução Local"])
     
     uploaded_files = {}
     with tab_upload:
