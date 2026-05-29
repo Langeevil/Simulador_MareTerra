@@ -14,8 +14,6 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
-from zipfile import ZipFile
-from xml.etree import ElementTree as ET
 
 import numpy as np
 import altair as alt
@@ -162,6 +160,7 @@ def clean_and_prepare_dataframe(csv_bytes: bytes) -> pd.DataFrame:
             'peso medio (g)': 'peso_medio_g',
             'biomassa (kg)': 'biomassa_kg',
             'biomassa': 'biomassa_kg',
+            'fase nutricional': 'fase_nutricional',
             'status': 'status',
             'produtor': 'produtor',
             'tanque': 'tanque',
@@ -169,6 +168,8 @@ def clean_and_prepare_dataframe(csv_bytes: bytes) -> pd.DataFrame:
             'data': 'data',
             'consumo de racao diario (kg)': 'consumo_racao_diario_kg',
             'consumo de ração diario (kg)': 'consumo_racao_diario_kg',
+            'consumo de racao na fase (kg)': 'consumo_racao_na_fase_kg',
+            'consumo de ração na fase (kg)': 'consumo_racao_na_fase_kg',
             'consumo de racao acumulado (kg)': 'consumo_racao_acumulado_kg',
             'consumo de ração acumulado (kg)': 'consumo_racao_acumulado_kg',
             'mortalidade acumulada (peixes)': 'mortalidade_acumulada_peixes',
@@ -826,39 +827,54 @@ def styled_report_dataframe(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     )
 
 
-def audit_xlsx_formulas(xlsx_bytes: bytes) -> pd.DataFrame:
-    """Inspeciona fórmulas de um XLSX e aponta erros prováveis de arrasto/referência."""
+def _col_letter(col_idx: int) -> str:
+    letter = ""
+    while col_idx >= 0:
+        letter = chr(col_idx % 26 + 65) + letter
+        col_idx = col_idx // 26 - 1
+    return letter
+
+
+def audit_csv_formulas(csv_bytes: bytes) -> pd.DataFrame:
+    """Inspeciona um arquivo CSV e aponta erros prováveis (#REF!, referências circulares, etc)."""
     issues: list[dict[str, str]] = []
-    ns = {"a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
-    with ZipFile(io.BytesIO(xlsx_bytes)) as archive:
-        sheet_files = [
-            name for name in archive.namelist()
-            if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
-        ]
-        for sheet_name in sheet_files:
-            root = ET.fromstring(archive.read(sheet_name))
-            for cell in root.findall(".//a:c", ns):
-                formula = cell.find("a:f", ns)
-                if formula is None or not formula.text:
-                    continue
-                cell_ref = cell.attrib.get("r", "")
-                formula_text = formula.text
-                problem = ""
-                if "#REF!" in formula_text.upper():
-                    problem = "Referência quebrada (#REF!)"
-                elif cell_ref and re.search(rf"(?<![A-Z0-9]){re.escape(cell_ref)}(?![A-Z0-9])", formula_text, re.I):
+    try:
+        df = pd.read_csv(io.BytesIO(csv_bytes), sep=';', encoding='utf-8-sig', dtype=str)
+        if df.shape[1] == 1:
+            df = pd.read_csv(io.BytesIO(csv_bytes), sep=',', encoding='utf-8-sig', dtype=str)
+    except Exception:
+        df = pd.read_csv(io.BytesIO(csv_bytes), sep=',', encoding='utf-8', dtype=str)
+
+    for row_idx, row in df.iterrows():
+        for col_idx, (col_name, value) in enumerate(row.items()):
+            if pd.isna(value):
+                continue
+            val_str = str(value).strip()
+            if not val_str:
+                continue
+            
+            cell_ref = f"{_col_letter(col_idx)}{row_idx + 2}"
+            problem = ""
+            
+            if "#REF!" in val_str.upper():
+                problem = "Referência quebrada (#REF!)"
+            elif val_str.startswith("="):
+                if re.search(rf"(?<![A-Z0-9]){re.escape(cell_ref)}(?![A-Z0-9])", val_str, re.I):
                     problem = "Possível referência circular direta"
-                elif re.search(r":\s*$|,\s*$|;\s*$", formula_text):
+                elif re.search(r":\s*$|,\s*$|;\s*$", val_str):
                     problem = "Fórmula possivelmente incompleta"
-                if problem:
-                    issues.append(
-                        {
-                            "Planilha XML": sheet_name,
-                            "Célula": cell_ref,
-                            "Problema": problem,
-                            "Fórmula": formula_text,
-                        }
-                    )
+            elif any(err in val_str.upper() for err in ["#VALUE!", "#DIV/0!", "#NAME?", "#N/A", "#NUM!"]):
+                problem = "Erro de cálculo exportado"
+
+            if problem:
+                issues.append(
+                    {
+                        "Célula": cell_ref,
+                        "Coluna Origem": str(col_name),
+                        "Problema": problem,
+                        "Conteúdo": val_str,
+                    }
+                )
     return pd.DataFrame(issues)
 
 
@@ -946,16 +962,16 @@ def render_management_inputs(
 
 def render_spreadsheet_audit() -> None:
     with st.expander("Auditoria opcional da planilha base"):
-        st.caption("Verifica fórmulas com #REF!, possíveis referências circulares diretas e fórmulas incompletas.")
+        st.caption("Verifica valores e fórmulas exportadas com #REF!, possível referência circular direta e fórmulas aparentemente incompletas.")
         workbook = st.file_uploader(
-            "Planilha base de projeção (.xlsx)",
-            type=["xlsx"],
+            "Planilha base de projeção (.csv)",
+            type=["csv"],
             key="audit_workbook_upload",
         )
         if workbook is None:
             return
         try:
-            issues = audit_xlsx_formulas(workbook.getvalue())
+            issues = audit_csv_formulas(workbook.getvalue())
         except Exception as exc:
             st.error(f"Não foi possível auditar a planilha: {exc}")
             return

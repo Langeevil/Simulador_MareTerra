@@ -28,7 +28,9 @@ SAIDA_COLUNAS = [
     "Quantidade de Peixes",
     "Peso Medio (g)",
     "Biomassa (kg)",
+    "Fase Nutricional",
     "Consumo de Racao Diario (kg)",
+    "Consumo de Racao na Fase (kg)",
     "Consumo de Racao Acumulado (kg)",
     "Custo de Racao Diario",
     "Custo de Racao Acumulado",
@@ -190,6 +192,7 @@ ALIASES_RACAO = {
         "fim",
     ],
     "preco_kg": ["preco kg", "preco_kg", "preco", "valor kg", "custo kg"],
+    "fase": ["fase", "fase nutricional", "fase produtiva", "tipo de racao", "racao"],
 }
 
 
@@ -216,6 +219,7 @@ class FaixaRacao:
     peso_inicial_g: float
     peso_final_g: float
     preco_kg: float
+    fase: str
 
 
 Curva = dict[str, float | int | str]
@@ -513,12 +517,14 @@ def preparar_racao(tabela: CsvTable) -> list[FaixaRacao]:
         tabela.headers, ALIASES_RACAO["peso_final"], contexto="racao.csv"
     )
     col_preco = encontrar_coluna(tabela.headers, ALIASES_RACAO["preco_kg"], contexto="racao.csv")
+    col_fase = encontrar_coluna(tabela.headers, ALIASES_RACAO["fase"], obrigatoria=False, contexto="racao.csv")
 
     faixas: list[FaixaRacao] = []
     for row in tabela.rows:
         peso_inicial = parse_numero_br(row[col_peso_inicial])
         peso_final = parse_numero_br(row[col_peso_final])
         preco = parse_numero_br(row[col_preco])
+        fase = str(row[col_fase]).strip() if col_fase else ""
         if any(math.isnan(v) for v in [peso_inicial, peso_final, preco]):
             continue
         faixas.append(
@@ -526,6 +532,7 @@ def preparar_racao(tabela: CsvTable) -> list[FaixaRacao]:
                 peso_inicial_g=peso_inicial,
                 peso_final_g=peso_final,
                 preco_kg=preco,
+                fase=fase,
             )
         )
 
@@ -535,7 +542,7 @@ def preparar_racao(tabela: CsvTable) -> list[FaixaRacao]:
     return sorted(faixas, key=lambda faixa: faixa.peso_inicial_g)
 
 
-def buscar_preco_racao(peso_medio_g: float, faixas_racao: list[FaixaRacao]) -> float:
+def buscar_faixa_racao(peso_medio_g: float, faixas_racao: list[FaixaRacao]) -> FaixaRacao | None:
     inicios = [faixa.peso_inicial_g for faixa in faixas_racao]
     idx = bisect.bisect_right(inicios, peso_medio_g) - 1
     if idx >= 0:
@@ -544,12 +551,12 @@ def buscar_preco_racao(peso_medio_g: float, faixas_racao: list[FaixaRacao]) -> f
         if faixa.peso_inicial_g <= peso_medio_g < faixa.peso_final_g or (
             ultima_faixa and peso_medio_g <= faixa.peso_final_g
         ):
-            return faixa.preco_kg
+            return faixa
 
     for faixa in faixas_racao:
         if faixa.peso_inicial_g <= peso_medio_g <= faixa.peso_final_g:
-            return faixa.preco_kg
-    return 0.0
+            return faixa
+    return None
 
 
 def adicionar_custos_racao(
@@ -557,23 +564,37 @@ def adicionar_custos_racao(
     faixas_racao: list[FaixaRacao],
     dia_solicitacao_relatorio: date,
 ) -> list[dict]:
-    """Adiciona custo diario e acumulado de racao ao relatorio bruto.
+    """Adiciona custo diario e acumulado de racao ao relatorio bruto, além de agrupar consumo por fase.
 
     O custo diario usa a faixa de preco em `racao.csv` correspondente ao peso
     medio da linha. O acumulado e zerado antes de `dia_solicitacao_relatorio`
     e, a partir dessa data, soma os custos diarios por lote.
+    O consumo acumulado é recalculado para ser agrupado por fase nutricional.
     """
     acumulado_por_lote: dict[tuple[object, object], float] = {}
+    consumo_acumulado_por_fase: dict[tuple[object, object, str], float] = {}
     resultado: list[dict] = []
 
     for registro in registros:
         linha = registro.copy()
         peso_medio = float(linha.get("Peso Medio (g)", 0.0) or 0.0)
         consumo_diario = float(linha.get("Consumo de Racao Diario (kg)", 0.0) or 0.0)
-        preco_kg = buscar_preco_racao(peso_medio, faixas_racao)
+        q_peixes = float(linha.get("Quantidade de Peixes", 0.0) or 0.0)
+        
+        # Se não há peixes (ex: vazio sanitário), não há fase nutricional ativa
+        if q_peixes > 0:
+            faixa = buscar_faixa_racao(peso_medio, faixas_racao)
+            preco_kg = faixa.preco_kg if faixa else 0.0
+            fase = faixa.fase if faixa else ""
+        else:
+            faixa = None
+            preco_kg = 0.0
+            fase = ""
+        
         custo_diario = consumo_diario * preco_kg
 
         lote_key = (linha.get("Produtor"), linha.get("Tanque"))
+        fase_key = (*lote_key, fase)
         data_linha = linha.get("Data")
         if isinstance(data_linha, datetime):
             data_linha = data_linha.date()
@@ -584,8 +605,15 @@ def adicionar_custos_racao(
         else:
             custo_acumulado = 0.0
 
+        consumo_acumulado_por_fase[fase_key] = consumo_acumulado_por_fase.get(fase_key, 0.0) + consumo_diario
+
         linha["Custo de Racao Diario"] = custo_diario
         linha["Custo de Racao Acumulado"] = custo_acumulado
+        linha["Fase Nutricional"] = fase
+        
+        # Cria uma coluna específica para a Fase para não quebrar a matemática da TCA Acumulada
+        linha["Consumo de Racao na Fase (kg)"] = consumo_acumulado_por_fase[fase_key]
+        
         resultado.append(linha)
 
     return resultado
@@ -1038,6 +1066,7 @@ def formatar_relatorio(registros: list[dict]) -> list[dict[str, object]]:
         "Peso Medio (g)": 2,
         "Biomassa (kg)": 2,
         "Consumo de Racao Diario (kg)": 2,
+        "Consumo de Racao na Fase (kg)": 4,
         "Consumo de Racao Acumulado (kg)": 4,
         "Custo de Racao Diario": 2,
         "Custo de Racao Acumulado": 2,
