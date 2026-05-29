@@ -684,17 +684,15 @@ def definir_status(peso_medio_g: float, curva: Curva | None = None, dias_cultivo
     peso_medio_g = round(float(peso_medio_g), 2)
     if peso_medio_g >= PESO_DESPESCA_G:
         return "Peixe Pronto"
-    if peso_medio_g == 120.0:
-        return "Class 2"
-    if peso_medio_g == 30.0:
+    if dias_cultivo == 30:
         return "Class 1"
+    if dias_cultivo in DIAS_BIOMETRIA:
+        return "Realizar Biometria"
     if curva is None:
         return ""
     marcador = normalizar_marcador_status(curva.get("marco", ""))
     if marcador:
         return marcador
-    if dias_cultivo in DIAS_BIOMETRIA:
-        return "Realizar Biometria"
     return ""
 
 
@@ -826,6 +824,8 @@ def simular_lote(
     registros: list[dict[str, object]] = []
     peixe_pronto_no_historico = False
     data_liberacao: date | None = None
+    class1_disparado = False
+    class2_disparado = pi >= 120.0
 
     adicionar_registro(
         registros,
@@ -849,6 +849,7 @@ def simular_lote(
     def simular_um_dia(data_dia: date, registrar: bool) -> None:
         nonlocal q, pm_real, pm_relatorio, bm_anterior, ca_kg
         nonlocal mort_acumulada_abs, dc, peixe_pronto_no_historico, estacao_atual, data_liberacao
+        nonlocal class1_disparado, class2_disparado
 
         estacao = detectar_estacao(data_dia)
         if estacao != estacao_atual:
@@ -885,6 +886,13 @@ def simular_lote(
             dias_cultivo = max((data_dia - data_inicial).days, 1)
             semana_num = ((dias_totais - 1) // 7) + 1
             status = definir_status(pm_relatorio, curva, dias_cultivo)
+            if status != "Peixe Pronto":
+                if not class2_disparado and pm_relatorio >= 120.0:
+                    status = "Class 2"
+                    class2_disparado = True
+                elif not class1_disparado and dias_cultivo == 30:
+                    status = "Class 1"
+                    class1_disparado = True
             tanque_liberado = 1 if status == "Peixe Pronto" and data_liberacao is None else 0
             if tanque_liberado:
                 data_liberacao = data_dia

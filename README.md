@@ -41,6 +41,7 @@ Por padrão, o simulador espera os seguintes arquivos CSV:
 | `plantel.csv` | Inventário dos lotes ativos, com produtor, tanque, quantidade, peso médio e data da última biometria. |
 | `curvas.csv` | Curvas zootécnicas de verão e inverno, com peso médio, GDP, mortalidade e taxa de arraçoamento. |
 | `racao.csv` | Tabela de faixas de peso, fases produtivas, tipo de ração e preço. |
+| `parametros_gerenciais.csv` | Opcional. Metas de PO, dias de abate e transferências usadas pela interface. |
 
 Os arquivos de entrada devem estar em `utf-8-sig` e separados por ponto e vírgula (`;`).
 
@@ -134,12 +135,26 @@ A interface também gera um relatório gerencial em Excel com abas `APT`, `ITA` 
 Na tabela gerencial da interface:
 
 - As colunas mensais começam no próprio mês da `Data do relatório`.
+- O arquivo opcional `parametros_gerenciais.csv` pode preencher as tabelas editáveis; se não for enviado, a interface cria 12 meses padrão.
+- A tela permite baixar o `parametros_gerenciais.csv` atualizado e, no modo local, salva esse arquivo na pasta de entrada escolhida.
+- O seletor `Meses exibidos no relatório da tela` filtra dinamicamente tabelas e gráficos.
 - `PO Atualizado` usa exatamente o valor informado em `PO Diário APT (kg)` ou `PO Diário ITA (kg)`.
-- `Abate PO Atualizado Total Mês` é calculado por `PO Diário * número real de dias do mês da coluna`.
-- `Saldo Acm Atualizado / mês` acumula, mês a mês, `Previsão Disponibilidade Total - Abate PO Atualizado Total Mês`.
+- `Abate PO Atualizado Total Mês` é calculado por `PO Diário * Dias Abate`, usando os valores preenchidos na tabela gerencial.
+- `Saldo Acm Atualizado / mês` acumula `Saldo Atualizado / dia * Dias de Abate` somado ao saldo acumulado do mês anterior.
 - As tabelas exibidas na tela usam destaque visual para blocos, totais, saldos e marcos de gestão, sem casas decimais.
 - Os gráficos usam o eixo X como mês e o eixo Y como volume projetado, com curvas ligadas diretamente às linhas numéricas da tabela.
 - Quando o nome de saída não contém pasta, a interface salva o CSV em `data/output/` com data e hora no nome.
+- A aba `Consolidado APT + ITA` usa o layout operacional com blocos `APT`, `ITAPORÃ`, `Geral por dia` e `Geral por mês`.
+- Quando o `curvas.csv` possui coluna de cluster/perfil, a interface exibe um comparativo opcional de programas/curvas empilhadas sem substituir os dados da simulação.
+
+Formato do `parametros_gerenciais.csv`:
+
+```csv
+tipo;mes;regiao;dias_abate;po_diario_kg;classe;produtor;volume_kg
+meta;2026-05;APT;21;90000;;;
+meta;2026-05;ITA;21;45000;;;
+transferencia;2026-05;APT;;;Parceria;Produtor X;2500
+```
 
 Para gerar um pacote executável local no Windows:
 
@@ -147,11 +162,15 @@ Para gerar um pacote executável local no Windows:
 .\build_exe.ps1
 ```
 
+O script valida a estrutura, instala dependências, compila os arquivos Python, limpa builds antigos e gera o pacote com PyInstaller.
+
 O arquivo será criado em:
 
 ```text
-dist\SimuladorBiomassa\SimuladorBiomassa.exe
+SimuladorBiomassa.exe
 ```
+
+Ao abrir pelo executável, uma pequena janela de controle fica na barra de tarefas do Windows. Use o botão `Encerrar` nessa janela para finalizar o servidor local do Streamlit. Fechar apenas a aba do navegador não encerra o app.
 
 ## Parâmetros disponíveis
 

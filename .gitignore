@@ -6,8 +6,8 @@ data/output/*.csv
 legacy/
 data/input/simulacao_completa_br.csv
 streamlit_app_*.log
+SimuladorBiomassa.log
 build/
 dist/
 *.spec
-build_exe.ps1
-launcher.py
+SimuladorBiomassa.exe

@@ -125,13 +125,14 @@ Os únicos valores válidos são:
 - `Tanque Disponivel`;
 - vazio.
 
-No `curvas.csv`, cada coluna de marco deve ter apenas três eventos:
+Os marcadores atuais são:
 
-| Peso de referência | Marcador |
+| Gatilho | Marcador |
 | --- | --- |
-| PM mais próximo de `30g` | `Class 1` |
-| PM mais próximo de `120g` | `Class 2` |
-| PM mais próximo de `900g` | `Peixe Pronto` |
+| Dia `30` de cultivo | `Class 1` |
+| Primeiro dia em que o peso médio cruza `120g` | `Class 2` |
+| Peso médio maior ou igual a `900g` ou marcador de curva equivalente | `Peixe Pronto` |
+| Dias `20`, `41`, `94` e `300` sem marcador mais prioritário | `Realizar Biometria` |
 
 As colunas usadas são:
 
@@ -140,9 +141,7 @@ As colunas usadas são:
 | Verão | `Marco de Gestao Verão` |
 | Inverno | `Marco de Gestao Inverno` |
 
-Além disso, se o peso exibido no relatório for exatamente `30,00g`, o status é `Class 1`; se for `120,00g`, o status é `Class 2`; se for `900,00g` ou maior, o status é `Peixe Pronto`.
-
-O status `Realizar Biometria` aparece nos dias de cultivo `20`, `41`, `94` e `300`, desde que não exista um marcador zootécnico mais prioritário na mesma linha.
+O status `Realizar Biometria` tem prioridade menor que `Class 1`, `Class 2` e `Peixe Pronto`.
 
 O status `Tanque Disponivel` aparece no quinto dia após a liberação do tanque, representando o fim do vazio sanitário configurado em `5` dias.
 
@@ -306,6 +305,23 @@ A interface Streamlit gera uma visão gerencial em abas `APT`, `ITA` e `Consolid
 
 As colunas mensais dessas abas começam no mês da data de geração do relatório. Por exemplo, se a data do relatório for `28/05/2026`, a primeira coluna mensal será `2026-05`.
 
+### Parâmetros Gerenciais
+
+A interface aceita um quinto arquivo opcional chamado `parametros_gerenciais.csv`. Quando ele é informado, seus valores preenchem as tabelas editáveis da tela; quando ele não existe, a interface gera 12 meses padrão a partir da data do relatório.
+
+Formato:
+
+```text
+tipo;mes;regiao;dias_abate;po_diario_kg;classe;produtor;volume_kg
+meta;2026-05;APT;21;90000;;;
+meta;2026-05;ITA;21;45000;;;
+transferencia;2026-05;APT;;;Parceria;Produtor X;2500
+```
+
+As linhas `meta` alimentam os campos `Dias Abate` e `PO Diário`. As linhas `transferencia` alimentam a tabela de volumes extras/transferências.
+
+A interface permite baixar o arquivo atualizado. No modo de execução local, ela também salva o `parametros_gerenciais.csv` na pasta de entrada escolhida.
+
 ### PO Atualizado
 
 ```text
@@ -317,21 +333,20 @@ O valor não é recalculado nem convertido para mensal nessa linha.
 ### Abate PO Atualizado Total Mês
 
 ```text
-Abate PO Atualizado Total Mês = PO preenchido na tabela * número real de dias do mês da coluna
+Abate PO Atualizado Total Mês = PO preenchido na tabela * Dias de Abate preenchido na tabela
 ```
 
-Exemplo: em uma coluna `2026-05`, o multiplicador é `31`; em `2026-06`, é `30`.
+O cálculo usa obrigatoriamente os valores preenchidos na tabela `Parâmetros Gerenciais e Metas`: `Dias Abate APT`, `PO Diário APT (kg)`, `Dias Abate ITA` e `PO Diário ITA (kg)`.
 
 ### Saldo Acumulado Atualizado / Mês
 
 ```text
 Saldo Acm Atualizado / mês =
-    Saldo acumulado do mês anterior
-    + Previsão Disponibilidade Total do mês
-    - Abate PO Atualizado Total Mês
+    Saldo Acm Atualizado / mês do mês anterior
+    + (Saldo Atualizado / dia do mês atual * Dias de Abate do mês atual)
 ```
 
-Essa regra evita distorções entre meses, pois o saldo de cada mês parte do saldo acumulado anterior.
+No primeiro mês, o saldo acumulado anterior é `0`.
 
 ### Visualização
 
@@ -346,7 +361,20 @@ As curvas dos gráficos são montadas diretamente a partir das linhas numéricas
 
 As tabelas exibidas nas abas `APT`, `ITA` e `Consolidado APT + ITA` não exibem casas decimais. A base interna continua numérica para cálculo e gráfico, mas a apresentação da tabela arredonda para inteiro.
 
+O seletor de meses da interface filtra as colunas exibidas nas tabelas e os pontos exibidos nos gráficos.
+
 Quando a interface recebe apenas um nome de arquivo em `Arquivo de saída`, o CSV da simulação é salvo em `data/output/` e o motor adiciona data e hora ao nome final.
+
+### Estrutura da Aba Consolidado APT + ITA
+
+A aba consolidada segue a estrutura operacional da planilha gerencial:
+
+- bloco `APT`, com disponibilidade diária, PO, saldo e peso médio;
+- bloco `ITAPORÃ`, com disponibilidade diária, PO, saldo e peso médio;
+- bloco `QUADRO DE DISPONIBILIDADE PARA O ABATE / DIA - GERAL`;
+- bloco `QUADRO DE DISPONIBILIDADE PARA O ABATE / MÊS - GERAL`.
+
+Os blocos regionais reutilizam os cálculos já gerados nas abas APT e ITA. O bloco geral soma as duas regiões.
 
 ## 12. Clusterização de Produtores
 
@@ -359,6 +387,8 @@ O `plantel.csv` pode conter uma coluna opcional de cluster/perfil tecnológico, 
 Se a coluna não existir, o simulador usa `Media Tecnologia` como padrão, sem alterar a curva atual.
 
 O `curvas.csv` também pode conter uma coluna opcional de cluster. Quando existirem curvas específicas para o cluster do lote, o simulador usa essas curvas. Se não existirem, usa a curva padrão da estação.
+
+Quando o arquivo contém mais de um cluster, a interface apresenta uma visualização opcional de programas/curvas empilhadas para comparação. Essa visualização é apenas analítica e não substitui automaticamente os dados da simulação.
 
 Além da seleção de curva específica, o código aplica um fator de desempenho somente quando o lote possui cluster informado:
 
