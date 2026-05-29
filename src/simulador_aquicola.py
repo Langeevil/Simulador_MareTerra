@@ -353,23 +353,39 @@ def preparar_curvas(tabela: CsvTable) -> list[Curva]:
     if curvas_largas:
         return curvas_largas
 
-    col_dia = encontrar_coluna(tabela.headers, ALIASES_CURVAS["dia"], contexto="curvas.csv")
+    col_dia = encontrar_coluna(
+        tabela.headers, ALIASES_CURVAS["dia"], obrigatoria=False, contexto="curvas.csv"
+    )
     col_estacao = encontrar_coluna(
-        tabela.headers, ALIASES_CURVAS["estacao"], contexto="curvas.csv"
+        tabela.headers, ALIASES_CURVAS["estacao"], obrigatoria=False, contexto="curvas.csv"
     )
     col_cluster = encontrar_coluna(
         tabela.headers, ALIASES_CURVAS["cluster"], obrigatoria=False, contexto="curvas.csv"
     )
-    col_peso = encontrar_coluna(tabela.headers, ALIASES_CURVAS["peso_ref"], contexto="curvas.csv")
-    col_gdp = encontrar_coluna(tabela.headers, ALIASES_CURVAS["gdp"], contexto="curvas.csv")
-    col_mort = encontrar_coluna(
-        tabela.headers, ALIASES_CURVAS["mortalidade_pct"], contexto="curvas.csv"
+    col_peso = encontrar_coluna(
+        tabela.headers, ALIASES_CURVAS["peso_ref"], obrigatoria=False, contexto="curvas.csv"
     )
-    col_pv = encontrar_coluna(tabela.headers, ALIASES_CURVAS["pv_pct"], contexto="curvas.csv")
+    col_gdp = encontrar_coluna(
+        tabela.headers, ALIASES_CURVAS["gdp"], obrigatoria=False, contexto="curvas.csv"
+    )
+    col_mort = encontrar_coluna(
+        tabela.headers, ALIASES_CURVAS["mortalidade_pct"], obrigatoria=False, contexto="curvas.csv"
+    )
+    col_pv = encontrar_coluna(
+        tabela.headers, ALIASES_CURVAS["pv_pct"], obrigatoria=False, contexto="curvas.csv"
+    )
     col_marco = encontrar_coluna(
         tabela.headers, ALIASES_CURVAS["marco"], obrigatoria=False, contexto="curvas.csv"
     )
-    col_racao = encontrar_coluna(tabela.headers, ALIASES_CURVAS["racao_und"], contexto="curvas.csv")
+    col_racao = encontrar_coluna(
+        tabela.headers, ALIASES_CURVAS["racao_und"], obrigatoria=False, contexto="curvas.csv"
+    )
+
+    # Se as colunas essenciais do formato estreito não existirem, retorna lista vazia
+    # (o formato ainda não está implementado no curvas.csv atual)
+    colunas_essenciais = [col_dia, col_estacao, col_peso, col_gdp, col_mort, col_pv, col_racao]
+    if any(col is None for col in colunas_essenciais):
+        return []
 
     curvas: list[Curva] = []
     for row in tabela.rows:
@@ -1127,6 +1143,11 @@ def executar(args: argparse.Namespace) -> Path:
     tanques = preparar_tanques(carregar_csv(input_dir / args.tanques))
     plantel = carregar_csv(input_dir / args.plantel)
     curvas = preparar_curvas(carregar_csv(input_dir / args.curvas))
+    if not curvas:
+        raise ValueError(
+            "curvas.csv nao possui colunas reconhecidas. "
+            "Verifique se o arquivo esta no formato correto (largo ou estreito)."
+        )
     racao = preparar_racao(carregar_csv(input_dir / args.racao))
     data_relatorio = parse_data_br(args.data_relatorio) if args.data_relatorio else date.today()
     momento_geracao = datetime.now()
