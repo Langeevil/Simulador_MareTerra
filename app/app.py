@@ -23,8 +23,12 @@ import streamlit as st
 # Configuração de Paths do Sistema
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+APP_DIR = ROOT_DIR / "app"
+for import_dir in (SRC_DIR, APP_DIR):
+    if str(import_dir) not in sys.path:
+        sys.path.insert(0, str(import_dir))
+
+from theme_config import style_dark_regional_report
 
 # Tentativa de importação do motor da simulação
 try:
@@ -844,6 +848,27 @@ def styled_report_dataframe(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     )
 
 
+def render_report_dataframe(
+    df: pd.DataFrame,
+    *,
+    height: int,
+    use_dark_theme: bool = False,
+) -> None:
+    display_df = format_df_for_display(df)
+
+    if not use_dark_theme:
+        st.dataframe(styled_report_dataframe(display_df), use_container_width=True, height=height)
+        return
+
+    try:
+        styler = style_dark_regional_report(display_df)
+    except ValueError as exc:
+        st.warning(f"Nao foi possivel aplicar o tema escuro regional: {exc}")
+        styler = styled_report_dataframe(display_df)
+
+    st.dataframe(styler, use_container_width=True, height=height)
+
+
 def _col_letter(col_idx: int) -> str:
     letter = ""
     while col_idx >= 0:
@@ -1109,7 +1134,7 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
         )
         if not chart_apt.empty:
             render_line_chart(chart_apt, "APT - Biomassa disponível x PO mensal", "Biomassa / abate projetado (kg)")
-        st.dataframe(styled_report_dataframe(format_df_for_display(df_apt_raw)), use_container_width=True, height=550)
+        render_report_dataframe(df_apt_raw, height=550, use_dark_theme=True)
     with tab_ita:
         chart_ita = dataframe_for_chart(
             df_ita_raw,
@@ -1117,7 +1142,7 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
         )
         if not chart_ita.empty:
             render_line_chart(chart_ita, "ITA - Biomassa disponível x PO mensal", "Biomassa / abate projetado (kg)")
-        st.dataframe(styled_report_dataframe(format_df_for_display(df_ita_raw)), use_container_width=True, height=550)
+        render_report_dataframe(df_ita_raw, height=550, use_dark_theme=True)
     with tab_consolidado:
         chart_consolidado = dataframe_for_chart(
             df_consolidado_raw,
@@ -1132,7 +1157,7 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
             for col, label in zip(metric_cols, chart_consolidado.columns[:3]):
                 col.metric(label, format_br_number(ultimo_valor_relevante(chart_consolidado[label]), 0))
             render_line_chart(chart_consolidado, "Consolidado APT + ITA", "Valor consolidado")
-        st.dataframe(styled_report_dataframe(format_df_for_display(df_consolidado_raw)), use_container_width=True, height=720)
+        render_report_dataframe(df_consolidado_raw, height=720)
 
 def render_common_settings() -> tuple[date, str, bool]:
     st.subheader("Configurações da simulação")
