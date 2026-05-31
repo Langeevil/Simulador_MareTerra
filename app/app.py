@@ -28,7 +28,7 @@ for import_dir in (SRC_DIR, APP_DIR):
     if str(import_dir) not in sys.path:
         sys.path.insert(0, str(import_dir))
 
-from theme_config import style_dark_regional_report
+from theme_config import PatternName, normalize_label, style_dark_regional_report
 
 # Tentativa de importação do motor da simulação
 try:
@@ -79,6 +79,23 @@ class ReportArtifact:
     output_bytes: bytes
     captured_output: str = ""
     output_path: str | None = None
+
+
+@dataclass(frozen=True)
+class RegionalReportSection:
+    base_title: str
+    pattern: PatternName
+    start_marker: str
+
+
+REGIONAL_REPORT_SECTIONS: tuple[RegionalReportSection, ...] = (
+    RegionalReportSection("QUADRO DE PEIXE GORDO - PRÓPRIO", "A", "quadro de peixe gordo - proprio"),
+    RegionalReportSection("QUADRO DE PEIXE GORDO - INTEGRAÇÃO", "B", "quadro de peixe gordo - integracao"),
+    RegionalReportSection("QUADRO DE PEIXE GORDO - PARCERIA", "C", "quadro de peixe gordo - parceria"),
+    RegionalReportSection("QUADRO DE PEIXE GORDO TOTAL", "A", "quadro de peixe gordo total"),
+    RegionalReportSection("QUADRO DE DISPONIBILIDADE PARA O ABATE POR DIA", "B", "quadro de disponibilidade para o abate por dia"),
+    RegionalReportSection("QUADRO DO SALDO DA DISPONIBILIDADE PARA O ABATE POR DIA e POR MÊS", "B", "quadro do saldo da disponibilidade"),
+)
 
 # ==========================================
 # CONFIGURAÇÃO DE UI (TEMA E CSS)

@@ -31,7 +31,7 @@ COLORS: dict[ColorName, str] = {
     "dark_gray": "#757171",
     "white": "#FFFFFF",
     "near_black": "#111827",
-    "brown": "#8f7031",
+    "brown": "#FBBF24",
 }
 
 
@@ -157,9 +157,13 @@ def _resolve_label_column(df: pd.DataFrame, label_column: str) -> str:
     raise ValueError(f"Coluna obrigatoria ausente no relatorio: {label_column}")
 
 
-def _row_styles(df: pd.DataFrame, label_column: str) -> dict[Any, str]:
+def _row_styles(
+    df: pd.DataFrame,
+    label_column: str,
+    default_pattern: PatternName | None = None,
+) -> dict[Any, str]:
     styles: dict[Any, str] = {}
-    current_pattern: TablePattern | None = None
+    current_pattern: TablePattern | None = TABLE_PATTERNS[default_pattern] if default_pattern else None
     body_row_count = 0
 
     for index, row in df.iterrows():
@@ -213,9 +217,10 @@ def style_dark_regional_report(
     df: pd.DataFrame,
     *,
     label_column: str = "Conteúdo / Bloco",
+    default_pattern: PatternName | None = None,
 ) -> pd.io.formats.style.Styler:
     label_column = _resolve_label_column(df, label_column)
-    row_styles = _row_styles(df, label_column)
+    row_styles = _row_styles(df, label_column, default_pattern)
 
     def apply_row_style(row: pd.Series) -> list[str]:
         style = row_styles.get(row.name, _css(COLORS["transparent"], COLORS["plot_header_text"]))
