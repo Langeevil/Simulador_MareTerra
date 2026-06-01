@@ -303,7 +303,7 @@ Status = Tanque Disponivel
 
 A interface Streamlit gera uma visão gerencial em abas `APT`, `ITA` e `Consolidado APT + ITA`.
 
-As colunas mensais dessas abas começam no mês da data de geração do relatório. Por exemplo, se a data do relatório for `28/05/2026`, a primeira coluna mensal será `2026-05`.
+As colunas mensais dessas abas vêm dos meses preenchidos no `parametros_gerenciais.csv`. A interface não cria meses, metas ou dias de abate padrão quando o arquivo não traz esses valores.
 
 ### Parâmetros Gerenciais
 

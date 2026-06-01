@@ -134,8 +134,9 @@ A interface também gera um relatório gerencial em Excel com abas `APT`, `ITA` 
 
 Na tabela gerencial da interface:
 
-- As colunas mensais começam no próprio mês da `Data do relatório`.
+- As colunas mensais vêm dos meses preenchidos no `parametros_gerenciais.csv`.
 - O arquivo obrigatório `parametros_gerenciais.csv` preenche as tabelas editáveis; sem ele, a execução fica bloqueada.
+- A interface não cria metas, dias de abate ou meses padrão quando o arquivo não traz esses valores.
 - A tela permite baixar o `parametros_gerenciais.csv` atualizado e, no modo local, salva esse arquivo na pasta de entrada escolhida.
 - O seletor `Meses exibidos no relatório da tela` filtra dinamicamente tabelas e gráficos.
 - `PO Atualizado` usa exatamente o valor informado em `PO Diário APT (kg)` ou `PO Diário ITA (kg)`.

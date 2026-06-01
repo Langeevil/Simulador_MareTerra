@@ -301,7 +301,8 @@ def meta_value(df_metas: pd.DataFrame, mes: str, coluna: str) -> float:
     valores = df_metas.loc[df_metas["Mês"] == mes, coluna].values
     if len(valores) == 0:
         return 0.0
-    return float(valores[0] or 0.0)
+    numero = pd.to_numeric(valores[0], errors="coerce")
+    return float(numero) if pd.notna(numero) else 0.0
 
 
 def normalizar_coluna_app(valor: object) -> str:
@@ -323,39 +324,51 @@ def normalizar_coluna_app(valor: object) -> str:
     return re.sub(r"[^a-z0-9]+", "_", texto).strip("_")
 
 
-def default_management_frames(data_inicio: date, num_meses: int = 12) -> tuple[pd.DataFrame, pd.DataFrame]:
-    primeiro_mes_relatorio = data_inicio.replace(day=1)
-    meses = pd.date_range(primeiro_mes_relatorio, periods=num_meses, freq='MS').strftime("%Y-%m").tolist()
-    df_metas = pd.DataFrame({
-        "Mês": meses,
-        "Dias Abate APT": [21] * num_meses,
-        "PO Diário APT (kg)": [90000] * num_meses,
-        "Dias Abate ITA": [21] * num_meses,
-        "PO Diário ITA (kg)": [45000] * num_meses,
-    })
-    df_terceiros = pd.DataFrame(columns=["Região Destino", "Classe", "Produtor", "Mês", "Volume (kg)"])
-    return df_metas, df_terceiros
+METAS_COLUMNS = ["Mês", "Dias Abate APT", "PO Diário APT (kg)", "Dias Abate ITA", "PO Diário ITA (kg)"]
+TERCEIROS_COLUMNS = ["Região Destino", "Classe", "Produtor", "Mês", "Volume (kg)"]
+
+
+def empty_management_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
+    return pd.DataFrame(columns=METAS_COLUMNS), pd.DataFrame(columns=TERCEIROS_COLUMNS)
+
+
+def numeric_or_blank(valor: object) -> float | None:
+    numero = pd.to_numeric(str(valor).replace(".", "").replace(",", "."), errors="coerce")
+    return float(numero) if pd.notna(numero) else None
+
+
+def csv_value_or_blank(valor: object) -> object:
+    return "" if pd.isna(valor) else valor
 
 
 def parse_parametros_gerenciais(csv_bytes: bytes, data_inicio: date, num_meses: int = 12) -> tuple[pd.DataFrame, pd.DataFrame]:
-    df_metas, df_terceiros = default_management_frames(data_inicio, num_meses)
     if not csv_bytes:
-        return df_metas, df_terceiros
+        return empty_management_frames()
 
     raw = pd.read_csv(io.BytesIO(csv_bytes), sep=';', encoding='utf-8-sig', dtype=str).fillna("")
     parametros = preparar_parametros_gerenciais(raw)
 
     metas = parametros["metas"].copy()
     abate = parametros["abate"].copy()
+    transferencias = parametros["transferencias"].copy()
+
+    meses = sorted({
+        str(mes).strip()
+        for df in (metas, abate, transferencias)
+        for mes in df.get("mes", pd.Series(dtype=str)).tolist()
+        if str(mes).strip()
+    })
+    df_metas = pd.DataFrame({"Mês": meses}, columns=METAS_COLUMNS)
+    for coluna in METAS_COLUMNS[1:]:
+        df_metas[coluna] = None
+
     for _, row in metas.iterrows():
         mes = str(row.get("mes", "")).strip()
         regiao = str(row.get("regiao", "")).strip().upper()
         if mes not in set(df_metas["Mês"]) or regiao not in {"APT", "ITA"}:
             continue
         idx = df_metas["Mês"] == mes
-        po = pd.to_numeric(str(row.get("po_diario_kg", "")).replace(".", "").replace(",", "."), errors="coerce")
-        if pd.notna(po):
-            df_metas.loc[idx, f"PO Diário {regiao} (kg)"] = float(po)
+        df_metas.loc[idx, f"PO Diário {regiao} (kg)"] = numeric_or_blank(row.get("po_diario_kg", ""))
 
     for _, row in abate.iterrows():
         mes = str(row.get("mes", "")).strip()
@@ -363,28 +376,21 @@ def parse_parametros_gerenciais(csv_bytes: bytes, data_inicio: date, num_meses: 
         if mes not in set(df_metas["Mês"]) or regiao not in {"APT", "ITA"}:
             continue
         idx = df_metas["Mês"] == mes
-        dias = pd.to_numeric(str(row.get("dias_abate", "")).replace(".", "").replace(",", "."), errors="coerce")
-        if pd.notna(dias):
-            df_metas.loc[idx, f"Dias Abate {regiao}"] = float(dias)
+        df_metas.loc[idx, f"Dias Abate {regiao}"] = numeric_or_blank(row.get("dias_abate", ""))
 
-    transferencias = parametros["transferencias"].copy()
     rows = []
     for _, row in transferencias.iterrows():
         mes = str(row.get("mes", "")).strip()
         regiao = str(row.get("regiao", "")).strip().upper()
-        classe = str(row.get("classe", "")).strip() or "Integração"
-        produtor = str(row.get("produtor", "")).strip() or "Transferência"
-        volume = pd.to_numeric(str(row.get("volume_kg", "")).replace(".", "").replace(",", "."), errors="coerce")
-        if mes in set(df_metas["Mês"]) and regiao in {"APT", "ITA"} and pd.notna(volume):
+        if mes and regiao in {"APT", "ITA"}:
             rows.append({
                 "Região Destino": regiao,
-                "Classe": classe,
-                "Produtor": produtor,
+                "Classe": str(row.get("classe", "")).strip(),
+                "Produtor": str(row.get("produtor", "")).strip(),
                 "Mês": mes,
-                "Volume (kg)": float(volume),
+                "Volume (kg)": numeric_or_blank(row.get("volume_kg", "")),
             })
-    if rows:
-        df_terceiros = pd.DataFrame(rows, columns=["Região Destino", "Classe", "Produtor", "Mês", "Volume (kg)"])
+    df_terceiros = pd.DataFrame(rows, columns=TERCEIROS_COLUMNS)
     return df_metas, df_terceiros
 
 
@@ -397,8 +403,8 @@ def parametros_gerenciais_to_csv(df_metas: pd.DataFrame, df_terceiros: pd.DataFr
                 "tipo": "meta",
                 "mes": mes,
                 "regiao": regiao,
-                "dias_abate": row.get(f"Dias Abate {regiao}", 0),
-                "po_diario_kg": row.get(f"PO Diário {regiao} (kg)", 0),
+                "dias_abate": csv_value_or_blank(row.get(f"Dias Abate {regiao}", "")),
+                "po_diario_kg": csv_value_or_blank(row.get(f"PO Diário {regiao} (kg)", "")),
                 "classe": "",
                 "produtor": "",
                 "volume_kg": "",
@@ -413,7 +419,7 @@ def parametros_gerenciais_to_csv(df_metas: pd.DataFrame, df_terceiros: pd.DataFr
                 "po_diario_kg": "",
                 "classe": row.get("Classe", ""),
                 "produtor": row.get("Produtor", ""),
-                "volume_kg": row.get("Volume (kg)", 0),
+                "volume_kg": csv_value_or_blank(row.get("Volume (kg)", "")),
             })
     buffer = io.StringIO()
     pd.DataFrame(rows).to_csv(buffer, sep=';', index=False)
@@ -986,6 +992,9 @@ def render_management_inputs(
         st.caption("Insira e ajuste as metas comerciais, dias operacionais e volumes extras antes de simular.")
     with action_col:
         save_action_slot = st.empty()
+    saved_toast_key = f"{key_prefix}_parametros_saved_toast"
+    if st.session_state.pop(saved_toast_key, False):
+        st.toast("parametros_gerenciais.csv salvo com sucesso.", icon="✅")
     
     df_metas_base, df_terceiros_base = parse_parametros_gerenciais(parametros_bytes or b"", data_inicio, num_meses)
     meses = df_metas_base["Mês"].tolist()
@@ -1067,7 +1076,10 @@ def render_management_inputs(
         if salvar_parametros:
             save_path.parent.mkdir(parents=True, exist_ok=True)
             save_path.write_bytes(parametros_csv)
-            st.toast("parametros_gerenciais.csv salvo com sucesso.", icon="✅")
+            st.session_state[f"{key_prefix}_parametros_file_mtime_ns"] = save_path.stat().st_mtime_ns
+            st.session_state[f"{key_prefix}_parametros_override_bytes"] = parametros_csv
+            st.session_state[saved_toast_key] = True
+            st.rerun()
 
     return df_metas_editado, df_terceiros_editado, meses_visiveis
 
@@ -1094,6 +1106,26 @@ def render_validated_management_inputs(
     except Exception as exc:
         st.error(f"Nao foi possivel ler parametros_gerenciais.csv: {exc}")
     return None
+
+
+@st.fragment(run_every="2s")
+def watch_parametros_gerenciais_file(path: Path, key_prefix: str) -> None:
+    if not path.exists():
+        return
+
+    state_key = f"{key_prefix}_parametros_file_mtime_ns"
+    toast_key = f"{key_prefix}_parametros_external_update_toast"
+    current_mtime = path.stat().st_mtime_ns
+    previous_mtime = st.session_state.get(state_key)
+
+    if previous_mtime is None:
+        st.session_state[state_key] = current_mtime
+        return
+
+    if current_mtime != previous_mtime:
+        st.session_state[state_key] = current_mtime
+        st.session_state[toast_key] = True
+        st.rerun()
 
 
 def render_spreadsheet_audit() -> None:
@@ -1322,6 +1354,12 @@ def main() -> None:
             if uploaded_files.get("parametros_gerenciais") is not None
             else None
         )
+        if parametros_bytes is not None:
+            uploaded_hash = hash(parametros_bytes)
+            if st.session_state.get("upload_parametros_source_hash") != uploaded_hash:
+                st.session_state["upload_parametros_source_hash"] = uploaded_hash
+                st.session_state.pop("upload_parametros_override_bytes", None)
+            parametros_bytes = st.session_state.get("upload_parametros_override_bytes", parametros_bytes)
         management_state = render_validated_management_inputs(
             data_relatorio,
             parametros_bytes,
@@ -1385,6 +1423,9 @@ def main() -> None:
         parametros_local = input_dir / REQUIRED_FILES["parametros_gerenciais"]
         management_state = None
         if parametros_local.exists():
+            watch_parametros_gerenciais_file(parametros_local, key_prefix="local")
+            if st.session_state.pop("local_parametros_external_update_toast", False):
+                st.toast("parametros_gerenciais.csv atualizado fora do app. Tela recarregada.", icon="🔄")
             management_state = render_validated_management_inputs(
                 data_relatorio,
                 parametros_local.read_bytes(),

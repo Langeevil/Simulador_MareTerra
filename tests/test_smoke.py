@@ -36,11 +36,23 @@ class SimuladorSmokeTests(unittest.TestCase):
             "transferencia;2026-05;APT;;;Parceria;Prod X;2500\n"
         ).encode("utf-8-sig")
         metas, terceiros = app.parse_parametros_gerenciais(csv_bytes, date(2026, 5, 29), 2)
+        self.assertEqual(metas["Mês"].tolist(), ["2026-05"])
         self.assertEqual(float(metas.loc[0, "Dias Abate APT"]), 20.0)
         self.assertEqual(float(metas.loc[0, "PO Diário APT (kg)"]), 1000.0)
         self.assertEqual(len(terceiros), 1)
         exported = app.parametros_gerenciais_to_csv(metas, terceiros)
         self.assertIn(b"transferencia", exported)
+
+    def test_parametros_does_not_create_default_months_or_values(self) -> None:
+        csv_bytes = (
+            "tipo;mes;regiao;dias_abate;po_diario_kg;classe;produtor;volume_kg\n"
+            "meta;2026-08;APT;;1234;;;\n"
+        ).encode("utf-8-sig")
+        metas, terceiros = app.parse_parametros_gerenciais(csv_bytes, date(2026, 5, 29), 12)
+        self.assertEqual(metas["Mês"].tolist(), ["2026-08"])
+        self.assertTrue(pd.isna(metas.loc[0, "Dias Abate APT"]))
+        self.assertTrue(pd.isna(metas.loc[0, "PO Diário ITA (kg)"]))
+        self.assertTrue(terceiros.empty)
 
     def test_parametros_backend_split_and_validation(self) -> None:
         df = pd.DataFrame({
