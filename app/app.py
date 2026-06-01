@@ -977,10 +977,15 @@ def render_management_inputs(
     num_meses: int = 12,
     parametros_bytes: bytes | None = None,
     key_prefix: str = "management",
+    save_path: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
     st.divider()
-    st.subheader("📊 Parâmetros Gerenciais e Metas")
-    st.caption("Insira e ajuste as metas comerciais, dias operacionais e volumes extras antes de simular.")
+    title_col, action_col = st.columns([0.74, 0.26])
+    with title_col:
+        st.subheader("📊 Parâmetros Gerenciais e Metas")
+        st.caption("Insira e ajuste as metas comerciais, dias operacionais e volumes extras antes de simular.")
+    with action_col:
+        save_action_slot = st.empty()
     
     df_metas_base, df_terceiros_base = parse_parametros_gerenciais(parametros_bytes or b"", data_inicio, num_meses)
     meses = df_metas_base["Mês"].tolist()
@@ -1039,6 +1044,30 @@ def render_management_inputs(
         use_container_width=True,
         key=f"{key_prefix}_download_parametros_gerenciais",
     )
+    if save_path is not None:
+        with save_action_slot.container():
+            salvar_parametros = st.button(
+                "Salvar CSV",
+                use_container_width=True,
+                key=f"{key_prefix}_save_parametros_gerenciais",
+            )
+            st.markdown(
+                """
+                <div style="
+                    width: 100%;
+                    font-size: 0.875rem;
+                    color: rgba(49, 51, 63, 0.6);
+                    line-height: 1.35;
+                ">
+                    Sobrescreve os dados no arquivo de parâmetros gerenciais com os dados alterados na tabela.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        if salvar_parametros:
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            save_path.write_bytes(parametros_csv)
+            st.success(f"parametros_gerenciais.csv atualizado com metas, dias de abate e transferências em: {save_path}")
 
     return df_metas_editado, df_terceiros_editado, meses_visiveis
 
@@ -1047,6 +1076,7 @@ def render_validated_management_inputs(
     data_inicio: date,
     parametros_bytes: bytes | None,
     key_prefix: str,
+    save_path: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str]] | None:
     if parametros_bytes is None:
         st.info("Envie parametros_gerenciais.csv para liberar a execucao da simulacao.")
@@ -1058,6 +1088,7 @@ def render_validated_management_inputs(
             num_meses=12,
             parametros_bytes=parametros_bytes,
             key_prefix=key_prefix,
+            save_path=save_path,
         )
     except ValueError as exc:
         st.error(f"parametros_gerenciais.csv invalido: {exc}")
@@ -1296,6 +1327,7 @@ def main() -> None:
             data_relatorio,
             parametros_bytes,
             key_prefix="upload",
+            save_path=ROOT_DIR / "data" / "input" / PARAMETROS_FILE,
         )
 
         if uploaded_files.get("curvas") is not None:
@@ -1358,6 +1390,7 @@ def main() -> None:
                 data_relatorio,
                 parametros_local.read_bytes(),
                 key_prefix="local",
+                save_path=parametros_local,
             )
         else:
             st.error(f"Arquivo obrigatorio nao encontrado: {PARAMETROS_FILE}")
