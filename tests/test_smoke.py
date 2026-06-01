@@ -19,7 +19,7 @@ app = importlib.util.module_from_spec(APP_SPEC)
 sys.modules["app_module"] = app
 APP_SPEC.loader.exec_module(app)
 
-from simulador_aquicola import definir_status
+from simulador_aquicola import definir_status, preparar_parametros_gerenciais
 
 
 class SimuladorSmokeTests(unittest.TestCase):
@@ -41,6 +41,26 @@ class SimuladorSmokeTests(unittest.TestCase):
         self.assertEqual(len(terceiros), 1)
         exported = app.parametros_gerenciais_to_csv(metas, terceiros)
         self.assertIn(b"transferencia", exported)
+
+    def test_parametros_backend_split_and_validation(self) -> None:
+        df = pd.DataFrame({
+            "tipo": ["meta", "transferencia"],
+            "mes": ["2026-05", "2026-05"],
+            "regiao": ["APT", "ITA"],
+            "dias_abate": ["20", ""],
+            "po_diario_kg": ["1000", ""],
+            "classe": ["", "Parceria"],
+            "produtor": ["", "Prod X"],
+            "volume_kg": ["", "2500"],
+        })
+        parametros = preparar_parametros_gerenciais(df)
+        self.assertEqual(set(parametros), {"abate", "metas", "transferencias"})
+        self.assertEqual(len(parametros["abate"]), 1)
+        self.assertEqual(len(parametros["metas"]), 1)
+        self.assertEqual(len(parametros["transferencias"]), 1)
+
+        with self.assertRaisesRegex(ValueError, "sem colunas obrigatorias"):
+            preparar_parametros_gerenciais(df.drop(columns=["volume_kg"]))
 
     def test_regional_po_and_saldo(self) -> None:
         mes = "Mês"

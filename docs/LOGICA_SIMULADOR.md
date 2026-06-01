@@ -307,7 +307,7 @@ As colunas mensais dessas abas começam no mês da data de geração do relatór
 
 ### Parâmetros Gerenciais
 
-A interface aceita um quinto arquivo opcional chamado `parametros_gerenciais.csv`. Quando ele é informado, seus valores preenchem as tabelas editáveis da tela; quando ele não existe, a interface gera 12 meses padrão a partir da data do relatório.
+A interface aceita um quinto arquivo obrigatório chamado `parametros_gerenciais.csv`. Seus valores preenchem as tabelas editáveis da tela; quando ele não existe ou está estruturalmente inválido, a execução fica bloqueada.
 
 Formato:
 

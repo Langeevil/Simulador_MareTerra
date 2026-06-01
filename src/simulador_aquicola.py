@@ -11,6 +11,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
+import pandas as pd
+
 
 PESO_DESPESCA_G = 900.0
 LIMITE_DIAS = 730
@@ -174,6 +176,20 @@ ALIASES_TANQUES = {
     "tanque": ["tanque", "id tanque", "tanque id", "estrutura", "viveiro"],
     "regiao": ["regiao", "regiao produtor", "localidade", "area"],
     "classe": ["classe", "classificacao", "tipo", "categoria"],
+}
+
+
+PARAMETROS_GERENCIAIS_REQUIRED_COLUMNS = {
+    "base": {"tipo", "mes", "regiao"},
+    "abate": {"dias_abate"},
+    "metas": {"po_diario_kg"},
+    "transferencias": {"classe", "produtor", "volume_kg"},
+}
+
+PARAMETROS_GERENCIAIS_TIPOS = {
+    "abate": {"abate", "dia_abate", "dias_abate"},
+    "metas": {"meta", "metas", "meta_po", "metas_po"},
+    "transferencias": {"transferencia", "transferencias"},
 }
 
 
@@ -351,6 +367,52 @@ def carregar_csv(caminho: Path) -> CsvTable:
         rows = [{k: (v or "") for k, v in row.items()} for row in reader]
 
     return CsvTable(headers=headers, rows=rows)
+
+
+def normalizar_coluna_parametros(valor: object) -> str:
+    return normalizar_nome(valor).replace(" ", "_")
+
+
+def validar_colunas_parametros_gerenciais(df: pd.DataFrame) -> None:
+    obrigatorias = set().union(*PARAMETROS_GERENCIAIS_REQUIRED_COLUMNS.values())
+    ausentes = sorted(obrigatorias - set(df.columns))
+    if ausentes:
+        esperadas = ", ".join(sorted(obrigatorias))
+        faltantes = ", ".join(ausentes)
+        raise ValueError(
+            "parametros_gerenciais.csv sem colunas obrigatorias. "
+            f"Faltando: {faltantes}. Colunas esperadas: {esperadas}."
+        )
+
+
+def preparar_parametros_gerenciais(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    parametros = df.copy().fillna("")
+    parametros.rename(columns={col: normalizar_coluna_parametros(col) for col in parametros.columns}, inplace=True)
+    validar_colunas_parametros_gerenciais(parametros)
+
+    tipo = parametros["tipo"].astype(str).map(normalizar_coluna_parametros)
+    metas = parametros[tipo.isin(PARAMETROS_GERENCIAIS_TIPOS["metas"])].copy()
+    abate = parametros[tipo.isin(PARAMETROS_GERENCIAIS_TIPOS["abate"])].copy()
+    transferencias = parametros[tipo.isin(PARAMETROS_GERENCIAIS_TIPOS["transferencias"])].copy()
+
+    if abate.empty:
+        abate = metas.copy()
+
+    return {
+        "abate": abate[["tipo", "mes", "regiao", "dias_abate"]].reset_index(drop=True),
+        "metas": metas[["tipo", "mes", "regiao", "po_diario_kg"]].reset_index(drop=True),
+        "transferencias": transferencias[
+            ["tipo", "mes", "regiao", "classe", "produtor", "volume_kg"]
+        ].reset_index(drop=True),
+    }
+
+
+def ler_parametros_gerenciais(caminho: Path) -> dict[str, pd.DataFrame]:
+    if not caminho.exists():
+        raise FileNotFoundError(f"Arquivo nao encontrado: {caminho}")
+
+    df = pd.read_csv(caminho, sep=";", encoding="utf-8-sig", dtype=str).fillna("")
+    return preparar_parametros_gerenciais(df)
 
 
 def preparar_curvas(tabela: CsvTable) -> list[Curva]:
@@ -1189,6 +1251,8 @@ def executar(args: argparse.Namespace) -> Path:
             "Verifique se o arquivo esta no formato correto (largo ou estreito)."
         )
     racao = preparar_racao(carregar_csv(input_dir / args.racao))
+    parametros_gerenciais = getattr(args, "parametros_gerenciais", "parametros_gerenciais.csv")
+    ler_parametros_gerenciais(input_dir / parametros_gerenciais)
     data_relatorio = parse_data_br(args.data_relatorio) if args.data_relatorio else date.today()
     momento_geracao = datetime.now()
 
@@ -1226,6 +1290,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--plantel", default="plantel.csv", help="Nome do arquivo plantel.csv.")
     parser.add_argument("--curvas", default="curvas.csv", help="Nome do arquivo curvas.csv.")
     parser.add_argument("--racao", default="racao.csv", help="Nome do arquivo racao.csv.")
+    parser.add_argument(
+        "--parametros-gerenciais",
+        default="parametros_gerenciais.csv",
+        help="Nome do arquivo parametros_gerenciais.csv.",
+    )
     parser.add_argument(
         "--output",
         default="simulacao_completa_br.csv",

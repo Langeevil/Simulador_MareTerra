@@ -41,7 +41,7 @@ Por padrão, o simulador espera os seguintes arquivos CSV:
 | `plantel.csv` | Inventário dos lotes ativos, com produtor, tanque, quantidade, peso médio e data da última biometria. |
 | `curvas.csv` | Curvas zootécnicas de verão e inverno, com peso médio, GDP, mortalidade e taxa de arraçoamento. |
 | `racao.csv` | Tabela de faixas de peso, fases produtivas, tipo de ração e preço. |
-| `parametros_gerenciais.csv` | Opcional. Metas de PO, dias de abate e transferências usadas pela interface. |
+| `parametros_gerenciais.csv` | Obrigatório. Metas de PO, dias de abate e transferências usadas pela interface. |
 
 Os arquivos de entrada devem estar em `utf-8-sig` e separados por ponto e vírgula (`;`).
 
@@ -135,7 +135,7 @@ A interface também gera um relatório gerencial em Excel com abas `APT`, `ITA` 
 Na tabela gerencial da interface:
 
 - As colunas mensais começam no próprio mês da `Data do relatório`.
-- O arquivo opcional `parametros_gerenciais.csv` pode preencher as tabelas editáveis; se não for enviado, a interface cria 12 meses padrão.
+- O arquivo obrigatório `parametros_gerenciais.csv` preenche as tabelas editáveis; sem ele, a execução fica bloqueada.
 - A tela permite baixar o `parametros_gerenciais.csv` atualizado e, no modo local, salva esse arquivo na pasta de entrada escolhida.
 - O seletor `Meses exibidos no relatório da tela` filtra dinamicamente tabelas e gráficos.
 - `PO Atualizado` usa exatamente o valor informado em `PO Diário APT (kg)` ou `PO Diário ITA (kg)`.

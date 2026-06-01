@@ -33,7 +33,12 @@ from theme_consolidado import style_consolidado_dataframe
 
 # Tentativa de importação do motor da simulação
 try:
-    from simulador_aquicola import carregar_csv, executar, preparar_curvas
+    from simulador_aquicola import (
+        carregar_csv,
+        executar,
+        preparar_curvas,
+        preparar_parametros_gerenciais,
+    )
 except ImportError:
     st.error("Erro Crítico: Módulo 'simulador_aquicola' não encontrado. Verifique a estrutura do projeto.")
     st.stop()
@@ -50,6 +55,7 @@ REQUIRED_FILES = {
     "tanques": "tanques.csv",
     "curvas": "curvas.csv",
     "racao": "racao.csv",
+    "parametros_gerenciais": "parametros_gerenciais.csv",
 }
 PARAMETROS_FILE = "parametros_gerenciais.csv"
 
@@ -70,6 +76,7 @@ class SimulationConfig:
     tanques: str
     curvas: str
     racao: str
+    parametros_gerenciais: str
     output: str
     data_relatorio: date
     mostrar_erros: bool
@@ -336,25 +343,31 @@ def parse_parametros_gerenciais(csv_bytes: bytes, data_inicio: date, num_meses: 
         return df_metas, df_terceiros
 
     raw = pd.read_csv(io.BytesIO(csv_bytes), sep=';', encoding='utf-8-sig', dtype=str).fillna("")
-    raw.rename(columns={col: normalizar_coluna_app(col) for col in raw.columns}, inplace=True)
-    if "tipo" not in raw.columns:
-        return df_metas, df_terceiros
+    parametros = preparar_parametros_gerenciais(raw)
 
-    metas = raw[raw["tipo"].str.strip().str.lower() == "meta"].copy()
+    metas = parametros["metas"].copy()
+    abate = parametros["abate"].copy()
     for _, row in metas.iterrows():
         mes = str(row.get("mes", "")).strip()
         regiao = str(row.get("regiao", "")).strip().upper()
         if mes not in set(df_metas["Mês"]) or regiao not in {"APT", "ITA"}:
             continue
         idx = df_metas["Mês"] == mes
-        dias = pd.to_numeric(str(row.get("dias_abate", "")).replace(".", "").replace(",", "."), errors="coerce")
         po = pd.to_numeric(str(row.get("po_diario_kg", "")).replace(".", "").replace(",", "."), errors="coerce")
-        if pd.notna(dias):
-            df_metas.loc[idx, f"Dias Abate {regiao}"] = float(dias)
         if pd.notna(po):
             df_metas.loc[idx, f"PO Diário {regiao} (kg)"] = float(po)
 
-    transferencias = raw[raw["tipo"].str.strip().str.lower() == "transferencia"].copy()
+    for _, row in abate.iterrows():
+        mes = str(row.get("mes", "")).strip()
+        regiao = str(row.get("regiao", "")).strip().upper()
+        if mes not in set(df_metas["Mês"]) or regiao not in {"APT", "ITA"}:
+            continue
+        idx = df_metas["Mês"] == mes
+        dias = pd.to_numeric(str(row.get("dias_abate", "")).replace(".", "").replace(",", "."), errors="coerce")
+        if pd.notna(dias):
+            df_metas.loc[idx, f"Dias Abate {regiao}"] = float(dias)
+
+    transferencias = parametros["transferencias"].copy()
     rows = []
     for _, row in transferencias.iterrows():
         mes = str(row.get("mes", "")).strip()
@@ -963,6 +976,7 @@ def render_management_inputs(
     data_inicio: date,
     num_meses: int = 12,
     parametros_bytes: bytes | None = None,
+    key_prefix: str = "management",
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
     st.divider()
     st.subheader("📊 Parâmetros Gerenciais e Metas")
@@ -979,7 +993,7 @@ def render_management_inputs(
             df_metas_base,
             use_container_width=True,
             hide_index=True,
-            key=f"metas_editor_{data_inicio.isoformat()}_{hash(parametros_bytes)}",
+            key=f"{key_prefix}_metas_editor_{data_inicio.isoformat()}_{hash(parametros_bytes)}",
             column_config={
                 "Mês": st.column_config.TextColumn("Mês", disabled=True),
                 "Dias Abate APT": st.column_config.NumberColumn("Dias Abate APT", min_value=1, step=1),
@@ -1003,13 +1017,14 @@ def render_management_inputs(
                 "Volume (kg)": st.column_config.NumberColumn("Volume (kg)", required=True, step=1000.0),
                 "Produtor": st.column_config.TextColumn("Produtor", required=True)
             },
-            key=f"terceiros_editor_{data_inicio.isoformat()}_{hash(parametros_bytes)}"
+            key=f"{key_prefix}_terceiros_editor_{data_inicio.isoformat()}_{hash(parametros_bytes)}"
         )
 
     meses_visiveis = st.multiselect(
         "Meses exibidos no relatório da tela",
         options=meses,
         default=meses,
+        key=f"{key_prefix}_meses_visiveis",
         help="Filtra dinamicamente as tabelas e gráficos das abas APT, ITA e Consolidado.",
     )
     if not meses_visiveis:
@@ -1022,10 +1037,33 @@ def render_management_inputs(
         file_name=PARAMETROS_FILE,
         mime="text/csv",
         use_container_width=True,
-        key="download_parametros_gerenciais",
+        key=f"{key_prefix}_download_parametros_gerenciais",
     )
 
     return df_metas_editado, df_terceiros_editado, meses_visiveis
+
+
+def render_validated_management_inputs(
+    data_inicio: date,
+    parametros_bytes: bytes | None,
+    key_prefix: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]] | None:
+    if parametros_bytes is None:
+        st.info("Envie parametros_gerenciais.csv para liberar a execucao da simulacao.")
+        return None
+
+    try:
+        return render_management_inputs(
+            data_inicio,
+            num_meses=12,
+            parametros_bytes=parametros_bytes,
+            key_prefix=key_prefix,
+        )
+    except ValueError as exc:
+        st.error(f"parametros_gerenciais.csv invalido: {exc}")
+    except Exception as exc:
+        st.error(f"Nao foi possivel ler parametros_gerenciais.csv: {exc}")
+    return None
 
 
 def render_spreadsheet_audit() -> None:
@@ -1216,6 +1254,7 @@ def run_simulation(config: SimulationConfig) -> tuple[Path, str]:
     args = argparse.Namespace(
         input_dir=str(config.input_dir), plantel=config.plantel,
         tanques=config.tanques, curvas=config.curvas, racao=config.racao,
+        parametros_gerenciais=config.parametros_gerenciais,
         output=str(output_path), mostrar_erros=config.mostrar_erros,
         data_relatorio=config.data_relatorio.strftime("%d/%m/%Y"),
     )
@@ -1229,24 +1268,6 @@ def main() -> None:
 
     data_relatorio, output_name, mostrar_erros = render_common_settings()
 
-    # Controles Interativos (Salvos no Session State)
-    with st.expander("Arquivo opcional de parâmetros gerenciais", expanded=False):
-        parametros_upload = st.file_uploader(
-            "parametros_gerenciais.csv",
-            type=["csv"],
-            key="u_parametros_gerenciais",
-            help="Opcional. Se enviado, preenche as tabelas de metas, dias de abate e transferências.",
-        )
-        parametros_bytes = parametros_upload.getvalue() if parametros_upload is not None else None
-
-    df_metas, df_terceiros, meses_visiveis = render_management_inputs(
-        data_relatorio,
-        num_meses=12,
-        parametros_bytes=parametros_bytes,
-    )
-    st.session_state["df_metas"] = df_metas
-    st.session_state["df_terceiros"] = df_terceiros
-    st.session_state["meses_visiveis"] = meses_visiveis
     render_spreadsheet_audit()
 
     tab_upload, tab_path = st.tabs(["📤 Upload de Arquivos", "💻 Execução Local"])
@@ -1260,6 +1281,22 @@ def main() -> None:
         with col2:
             uploaded_files["tanques"] = st.file_uploader("tanques.csv", type=["csv"], key="u_tanques")
             uploaded_files["racao"] = st.file_uploader("racao.csv", type=["csv"], key="u_racao")
+        uploaded_files["parametros_gerenciais"] = st.file_uploader(
+            "parametros_gerenciais.csv",
+            type=["csv"],
+            key="u_parametros_gerenciais",
+            help="Obrigatorio. Contem dias de abate, metas PO e transferencias.",
+        )
+        parametros_bytes = (
+            uploaded_files["parametros_gerenciais"].getvalue()
+            if uploaded_files.get("parametros_gerenciais") is not None
+            else None
+        )
+        management_state = render_validated_management_inputs(
+            data_relatorio,
+            parametros_bytes,
+            key_prefix="upload",
+        )
 
         if uploaded_files.get("curvas") is not None:
             try:
@@ -1270,27 +1307,40 @@ def main() -> None:
                 st.info(f"Não foi possível montar o comparativo de curvas: {exc}")
             
         missing = [f for k, f in REQUIRED_FILES.items() if uploaded_files.get(k) is None]
-        if missing:
+        if missing or management_state is None:
+            if management_state is None and PARAMETROS_FILE not in missing:
+                missing.append(PARAMETROS_FILE)
             st.warning("Envie todos os arquivos obrigatórios: " + ", ".join(missing))
             st.button("🚀 Executar Simulação", disabled=True, key="btn_up_disabled")
         else:
             if st.button("🚀 Executar Simulação", type="primary", key="btn_up_run"):
                 try:
+                    df_metas, df_terceiros, meses_visiveis = management_state
                     with tempfile.TemporaryDirectory() as temp_dir:
                         work_dir = Path(temp_dir)
                         for key, file_name in REQUIRED_FILES.items():
-                            (work_dir / file_name).write_bytes(uploaded_files[key].getbuffer())
+                            if key == "parametros_gerenciais":
+                                (work_dir / file_name).write_bytes(
+                                    parametros_gerenciais_to_csv(df_metas, df_terceiros)
+                                )
+                            else:
+                                (work_dir / file_name).write_bytes(uploaded_files[key].getbuffer())
                             
                         config = SimulationConfig(
                             input_dir=work_dir, plantel=REQUIRED_FILES["plantel"],
                             tanques=REQUIRED_FILES["tanques"], curvas=REQUIRED_FILES["curvas"],
-                            racao=REQUIRED_FILES["racao"], output=output_name,
+                            racao=REQUIRED_FILES["racao"],
+                            parametros_gerenciais=REQUIRED_FILES["parametros_gerenciais"],
+                            output=output_name,
                             data_relatorio=data_relatorio, mostrar_erros=mostrar_erros,
                         )
                         with st.spinner("Motor de Cálculo em Execução..."):
                             out_path, stdout = run_simulation(config)
                             out_bytes = out_path.read_bytes()
                             
+                    st.session_state["df_metas"] = df_metas
+                    st.session_state["df_terceiros"] = df_terceiros
+                    st.session_state["meses_visiveis"] = meses_visiveis
                     st.session_state["last_artifact"] = ReportArtifact(out_path.name, out_bytes, stdout, str(out_path))
                 except Exception as e:
                     st.error(f"Falha Crítica na Execução: {e}")
@@ -1298,6 +1348,19 @@ def main() -> None:
     with tab_path:
         st.caption("Modo desenvolvedor: leitura direta do diretório local.")
         input_dir = Path(st.text_input("Pasta 'input'", value=str(ROOT_DIR / "data" / "input"))).expanduser()
+        missing_local = [
+            file_name for file_name in REQUIRED_FILES.values() if not (input_dir / file_name).exists()
+        ]
+        parametros_local = input_dir / REQUIRED_FILES["parametros_gerenciais"]
+        management_state = None
+        if parametros_local.exists():
+            management_state = render_validated_management_inputs(
+                data_relatorio,
+                parametros_local.read_bytes(),
+                key_prefix="local",
+            )
+        else:
+            st.error(f"Arquivo obrigatorio nao encontrado: {PARAMETROS_FILE}")
         curvas_local = input_dir / REQUIRED_FILES["curvas"]
         if curvas_local.exists():
             try:
@@ -1305,11 +1368,18 @@ def main() -> None:
             except Exception as exc:
                 st.info(f"Não foi possível montar o comparativo de curvas local: {exc}")
         
-        if st.button("🚀 Executar Simulação Local", type="primary", key="btn_local_run"):
+        if missing_local or management_state is None:
+            if missing_local:
+                st.warning("Arquivos locais obrigatorios ausentes: " + ", ".join(missing_local))
+            st.button("🚀 Executar Simulação Local", disabled=True, key="btn_local_disabled")
+        elif st.button("🚀 Executar Simulação Local", type="primary", key="btn_local_run"):
+            df_metas, df_terceiros, meses_visiveis = management_state
             config = SimulationConfig(
                 input_dir=input_dir, plantel=REQUIRED_FILES["plantel"],
                 tanques=REQUIRED_FILES["tanques"], curvas=REQUIRED_FILES["curvas"],
-                racao=REQUIRED_FILES["racao"], output=output_name,
+                racao=REQUIRED_FILES["racao"],
+                parametros_gerenciais=REQUIRED_FILES["parametros_gerenciais"],
+                output=output_name,
                 data_relatorio=data_relatorio, mostrar_erros=mostrar_erros,
             )
             try:
@@ -1319,6 +1389,9 @@ def main() -> None:
                 )
                 with st.spinner("Motor de Cálculo em Execução..."):
                     out_path, stdout = run_simulation(config)
+                st.session_state["df_metas"] = df_metas
+                st.session_state["df_terceiros"] = df_terceiros
+                st.session_state["meses_visiveis"] = meses_visiveis
                 st.session_state["last_artifact"] = ReportArtifact(out_path.name, out_path.read_bytes(), stdout, str(out_path))
             except Exception as e:
                 st.error(f"Falha Crítica na Execução: {e}")
