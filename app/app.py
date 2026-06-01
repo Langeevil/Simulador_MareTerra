@@ -1079,7 +1079,6 @@ def render_validated_management_inputs(
     save_path: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str]] | None:
     if parametros_bytes is None:
-        st.info("Envie parametros_gerenciais.csv para liberar a execucao da simulacao.")
         return None
 
     try:
@@ -1127,14 +1126,24 @@ def curvas_cluster_dataframe_from_path(path: Path) -> pd.DataFrame:
         rows.append(
             {
                 "Dia": int(curva["dia"]),
-                "Estação": "Verão" if curva["estacao"] == "V" else "Inverno",
+                "Tipo de Curva": "Verão" if curva["estacao"] == "V" else "Inverno",
                 "Cluster": cluster,
                 "Peso Médio (g)": float(curva["peso_ref_g"]),
                 "GDP (g/dia)": float(curva["gdp_g"]),
                 "Mortalidade (%)": float(curva["mortalidade_pct"]),
             }
         )
-    return pd.DataFrame(rows)
+    curvas_df = pd.DataFrame(rows)
+    if curvas_df.empty:
+        return curvas_df
+
+    ordem_tipo_curva = {"Inverno": 0, "Verão": 1}
+    curvas_df["_ordem_tipo_curva"] = curvas_df["Tipo de Curva"].map(ordem_tipo_curva).fillna(2)
+    return (
+        curvas_df.sort_values(["Dia", "_ordem_tipo_curva", "Cluster"])
+        .drop(columns="_ordem_tipo_curva")
+        .reset_index(drop=True)
+    )
 
 
 def curvas_cluster_dataframe_from_bytes(csv_bytes: bytes) -> pd.DataFrame:
@@ -1145,29 +1154,19 @@ def curvas_cluster_dataframe_from_bytes(csv_bytes: bytes) -> pd.DataFrame:
 
 
 def render_curve_programs_preview(curvas_df: pd.DataFrame) -> None:
-    if curvas_df.empty or curvas_df["Cluster"].nunique() <= 1:
+    if curvas_df.empty:
         return
 
     with st.expander("Comparativo de programas / curvas por cluster", expanded=False):
-        metric = st.radio(
-            "Métrica da curva",
-            ["Peso Médio (g)", "GDP (g/dia)", "Mortalidade (%)"],
-            horizontal=True,
-            key="curvas_cluster_metric",
+        display_df = curvas_df.copy()
+        display_df["_ordem_tipo_curva"] = display_df["Tipo de Curva"].map({"Inverno": 0, "Verão": 1}).fillna(2)
+        display_df = (
+            display_df.sort_values(["Dia", "_ordem_tipo_curva", "Cluster"])
+            .drop(columns="_ordem_tipo_curva")
+            .reset_index(drop=True)
         )
-        chart = (
-            alt.Chart(curvas_df)
-            .mark_line(point=False, strokeWidth=2)
-            .encode(
-                x=alt.X("Dia:Q", title="Dia de cultivo"),
-                y=alt.Y(f"{metric}:Q", title=metric),
-                color=alt.Color("Cluster:N", title="Programa / Cluster", legend=alt.Legend(orient="left")),
-                strokeDash=alt.StrokeDash("Estação:N", title="Estação"),
-                tooltip=["Dia:Q", "Estação:N", "Cluster:N", alt.Tooltip(f"{metric}:Q", title=metric, format=",.2f")],
-            )
-            .properties(height=320)
-        )
-        st.altair_chart(chart, use_container_width=True)
+        height = min(620, max(260, 38 * (len(display_df) + 1)))
+        st.dataframe(display_df, use_container_width=True, hide_index=True, height=height)
 
 # ==========================================
 # GERAÇÃO DO DASHBOARD E INTERFACE PRINCIPAL
