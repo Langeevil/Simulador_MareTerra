@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -36,6 +37,21 @@ def log_path() -> Path:
     return runtime_dir() / "SimuladorBiomassa.log"
 
 
+def ensure_runtime_data_files() -> None:
+    """Garante uma pasta data/input editavel ao lado do executavel."""
+    source = app_root() / "data" / "input"
+    target = runtime_dir() / "data" / "input"
+    if not source.exists() or source.resolve() == target.resolve():
+        return
+
+    target.mkdir(parents=True, exist_ok=True)
+    for item in source.iterdir():
+        if item.is_file():
+            target_file = target / item.name
+            if not target_file.exists():
+                shutil.copy2(item, target_file)
+
+
 def find_free_port(start: int = 8501, attempts: int = 50) -> int:
     for port in range(start, start + attempts):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -50,6 +66,7 @@ def find_free_port(start: int = 8501, attempts: int = 50) -> int:
 
 def run_streamlit_server(port: int) -> None:
     root = app_root()
+    os.environ["SIMULADOR_RUNTIME_DIR"] = str(runtime_dir())
     app_path = root / "app" / "app.py"
     src_path = root / "src"
 
@@ -272,6 +289,7 @@ def main() -> None:
         run_streamlit_server(int(sys.argv[2]))
         return
 
+    ensure_runtime_data_files()
     port = find_free_port()
     url = f"http://127.0.0.1:{port}"
     server = start_server_process(port)

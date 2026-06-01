@@ -5,6 +5,7 @@ import bisect
 import csv
 import math
 import re
+import sys
 import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -52,6 +53,29 @@ SAIDA_COLUNAS = [
     "Tanques Liberados",
     "Tanques Disponivel",
 ]
+
+
+def runtime_root() -> Path:
+    """Raiz usada para caminhos relativos, tanto em dev quanto no executavel."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]
+
+
+def resolve_runtime_path(caminho: str | Path) -> Path:
+    path = Path(caminho).expanduser()
+    if path.is_absolute():
+        return path
+    return runtime_root() / path
+
+
+def resolve_input_file(input_dir: Path, arquivo: str | Path) -> Path:
+    path = Path(arquivo).expanduser()
+    if path.is_absolute():
+        return path
+    if path.parent != Path("."):
+        return resolve_runtime_path(path)
+    return input_dir / path
 
 
 ALIASES_PLANTEL = {
@@ -1250,18 +1274,18 @@ def salvar_plantel_nova_geracao(caminho: Path, registros: list[dict[str, object]
 
 
 def executar(args: argparse.Namespace) -> Path:
-    input_dir = Path(args.input_dir)
-    tanques = preparar_tanques(carregar_csv(input_dir / args.tanques))
-    plantel = carregar_csv(input_dir / args.plantel)
-    curvas = preparar_curvas(carregar_csv(input_dir / args.curvas))
+    input_dir = resolve_runtime_path(args.input_dir)
+    tanques = preparar_tanques(carregar_csv(resolve_input_file(input_dir, args.tanques)))
+    plantel = carregar_csv(resolve_input_file(input_dir, args.plantel))
+    curvas = preparar_curvas(carregar_csv(resolve_input_file(input_dir, args.curvas)))
     if not curvas:
         raise ValueError(
             "curvas.csv nao possui colunas reconhecidas. "
             "Verifique se o arquivo esta no formato correto (largo ou estreito)."
         )
-    racao = preparar_racao(carregar_csv(input_dir / args.racao))
+    racao = preparar_racao(carregar_csv(resolve_input_file(input_dir, args.racao)))
     parametros_gerenciais = getattr(args, "parametros_gerenciais", "parametros_gerenciais.csv")
-    ler_parametros_gerenciais(input_dir / parametros_gerenciais)
+    ler_parametros_gerenciais(resolve_input_file(input_dir, parametros_gerenciais))
     data_relatorio = parse_data_br(args.data_relatorio) if args.data_relatorio else date.today()
     momento_geracao = datetime.now()
 
@@ -1276,15 +1300,15 @@ def executar(args: argparse.Namespace) -> Path:
     plantel_nova_geracao = getattr(args, "plantel_nova_geracao_output", "")
     if plantel_nova_geracao:
         plantel_output = Path(plantel_nova_geracao)
-        if not plantel_output.is_absolute() and plantel_output.parent == Path("."):
-            plantel_output = input_dir / plantel_output
+        if not plantel_output.is_absolute():
+            plantel_output = resolve_runtime_path(plantel_output)
         plantel_output = adicionar_timestamp_arquivo(plantel_output, momento_geracao)
         salvar_plantel_nova_geracao(plantel_output, resultado)
     resultado_br = formatar_relatorio(resultado)
 
     output = Path(args.output)
-    if not output.is_absolute() and output.parent == Path("."):
-        output = input_dir / output
+    if not output.is_absolute():
+        output = resolve_runtime_path(output)
     output = adicionar_timestamp_arquivo(output, momento_geracao)
     salvar_csv(output, resultado_br)
     return output
@@ -1294,7 +1318,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Simulador de Planejamento Aquicola Mar&Terra."
     )
-    parser.add_argument("--input-dir", default=".", help="Pasta onde estao os CSVs de entrada.")
+    parser.add_argument("--input-dir", default=r".\data\input", help="Pasta onde estao os CSVs de entrada.")
     parser.add_argument("--tanques", default="tanques.csv", help="Nome do arquivo tanques.csv.")
     parser.add_argument("--plantel", default="plantel.csv", help="Nome do arquivo plantel.csv.")
     parser.add_argument("--curvas", default="curvas.csv", help="Nome do arquivo curvas.csv.")
@@ -1306,7 +1330,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output",
-        default="simulacao_completa_br.csv",
+        default=r".\data\output\simulacao_completa_br.csv",
         help="Arquivo CSV de saida.",
     )
     parser.add_argument(

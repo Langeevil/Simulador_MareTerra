@@ -19,7 +19,13 @@ app = importlib.util.module_from_spec(APP_SPEC)
 sys.modules["app_module"] = app
 APP_SPEC.loader.exec_module(app)
 
-from simulador_aquicola import FaixaRacao, adicionar_custos_racao, definir_status, preparar_parametros_gerenciais
+from simulador_aquicola import (
+    FaixaRacao,
+    adicionar_custos_racao,
+    definir_status,
+    preparar_parametros_gerenciais,
+    resolve_runtime_path,
+)
 
 
 class SimuladorSmokeTests(unittest.TestCase):
@@ -27,6 +33,13 @@ class SimuladorSmokeTests(unittest.TestCase):
         self.assertEqual(definir_status(50, None, 30), "Class 1")
         self.assertEqual(definir_status(900, None, 100), "Peixe Pronto")
         self.assertEqual(definir_status(80, None, 20), "Realizar Biometria")
+
+    def test_default_relative_paths_resolve_from_project_root(self) -> None:
+        self.assertEqual(resolve_runtime_path("data/input").resolve(), (ROOT / "data" / "input").resolve())
+        self.assertEqual(
+            app.resolve_output_path(r".\data\output\simulacao.csv").resolve(),
+            (ROOT / "data" / "output" / "simulacao.csv").resolve(),
+        )
 
     def test_parametros_roundtrip(self) -> None:
         csv_bytes = (

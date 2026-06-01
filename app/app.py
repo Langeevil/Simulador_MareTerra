@@ -5,6 +5,7 @@ import base64
 import csv
 import html
 import io
+import os
 import sys
 import tempfile
 import re
@@ -58,6 +59,18 @@ REQUIRED_FILES = {
     "parametros_gerenciais": "parametros_gerenciais.csv",
 }
 PARAMETROS_FILE = "parametros_gerenciais.csv"
+
+
+def runtime_root() -> Path:
+    runtime_dir = os.environ.get("SIMULADOR_RUNTIME_DIR")
+    if runtime_dir:
+        return Path(runtime_dir).resolve()
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return ROOT_DIR
+
+
+RUNTIME_DIR = runtime_root()
 
 
 def timestamped_filename(file_name: str, momento: datetime | None = None) -> str:
@@ -1308,9 +1321,11 @@ def render_common_settings() -> tuple[date, str, bool]:
 
 def resolve_output_path(output_name: str) -> Path:
     output_path = Path(output_name).expanduser()
-    if output_path.is_absolute() or output_path.parent != Path("."):
+    if output_path.is_absolute():
         return output_path
-    return ROOT_DIR / "data" / "output" / output_path.name
+    if output_path.parent != Path("."):
+        return RUNTIME_DIR / output_path
+    return RUNTIME_DIR / "data" / "output" / output_path.name
 
 
 def run_simulation(config: SimulationConfig) -> tuple[Path, str]:
@@ -1367,7 +1382,7 @@ def main() -> None:
             data_relatorio,
             parametros_bytes,
             key_prefix="upload",
-            save_path=ROOT_DIR / "data" / "input" / PARAMETROS_FILE,
+            save_path=RUNTIME_DIR / "data" / "input" / PARAMETROS_FILE,
         )
 
         if uploaded_files.get("curvas") is not None:
@@ -1419,7 +1434,8 @@ def main() -> None:
 
     with tab_path:
         st.caption("Modo desenvolvedor: leitura direta do diretório local.")
-        input_dir = Path(st.text_input("Pasta 'input'", value=str(ROOT_DIR / "data" / "input"))).expanduser()
+        raw_input_dir = Path(st.text_input("Pasta 'input'", value=r".\data\input")).expanduser()
+        input_dir = raw_input_dir if raw_input_dir.is_absolute() else RUNTIME_DIR / raw_input_dir
         missing_local = [
             file_name for file_name in REQUIRED_FILES.values() if not (input_dir / file_name).exists()
         ]

@@ -105,10 +105,16 @@ Observação sobre `%PV`: nos arquivos atuais, valores como `0,0135` já represe
 
 ## Como utilizar
 
-Os arquivos de entrada ficam em `data/input/`. Para executar pela linha de comando:
+Os arquivos de entrada ficam em `.\data\input\` e a saida padrao fica em `.\data\output\`. Caminhos relativos sao resolvidos a partir da raiz do projeto em desenvolvimento ou da pasta onde esta o executavel. Para executar pela linha de comando com os caminhos padrao:
 
 ```powershell
-python .\src\simulador_aquicola.py --input-dir .\data\input --output "D:\mareterra\simulador\data\output\simulacao_completa_br.csv"
+python .\src\simulador_aquicola.py
+```
+
+Tambem e possivel informar os arquivos necessarios diretamente como caminhos relativos ao projeto:
+
+```powershell
+python .\src\simulador_aquicola.py --curvas .\data\input\curvas.csv --racao .\data\input\racao.csv --plantel .\data\input\plantel.csv --tanques .\data\input\tanques.csv --parametros-gerenciais .\data\input\parametros_gerenciais.csv
 ```
 
 Para usar os arquivos na área de trabalho e salvar o resultado também lá:
@@ -177,12 +183,12 @@ Ao abrir pelo executável, uma pequena janela de controle fica na barra de taref
 
 | Parâmetro | Padrão | Uso |
 | --- | --- | --- |
-| `--input-dir` | `.` | Pasta onde estão os CSVs de entrada. |
+| `--input-dir` | `.\data\input` | Pasta onde estão os CSVs de entrada. |
 | `--tanques` | `tanques.csv` | Nome do arquivo de tanques. |
 | `--plantel` | `plantel.csv` | Nome do arquivo de plantel. |
 | `--curvas` | `curvas.csv` | Nome do arquivo de curvas zootécnicas. |
 | `--racao` | `racao.csv` | Nome do arquivo de ração. |
-| `--output` | `simulacao_completa_br.csv` | Caminho ou nome do arquivo final. |
+| `--output` | `.\data\output\simulacao_completa_br.csv` | Caminho ou nome do arquivo final. |
 | `--mostrar-erros` | desativado | Mostra inconsistências encontradas em lotes individuais. |
 | `--plantel-nova-geracao-output` | vazio | Gera um CSV opcional com tanques disponíveis para novo povoamento. |
 
