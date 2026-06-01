@@ -1047,7 +1047,7 @@ def render_management_inputs(
     if save_path is not None:
         with save_action_slot.container():
             salvar_parametros = st.button(
-                "Salvar CSV",
+                "SALVAR ALTERAÇÕES",
                 use_container_width=True,
                 key=f"{key_prefix}_save_parametros_gerenciais",
             )
