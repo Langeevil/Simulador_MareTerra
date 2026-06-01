@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 
 
@@ -634,7 +635,6 @@ def adicionar_custos_racao(
     e, a partir dessa data, soma os custos diarios por lote.
     O consumo acumulado é recalculado para ser agrupado por fase nutricional.
     """
-    acumulado_por_lote: dict[tuple[object, object], float] = {}
     consumo_acumulado_por_fase: dict[tuple[object, object, str], float] = {}
     resultado: list[dict] = []
 
@@ -658,20 +658,10 @@ def adicionar_custos_racao(
 
         lote_key = (linha.get("Produtor"), linha.get("Tanque"))
         fase_key = (*lote_key, fase)
-        data_linha = linha.get("Data")
-        if isinstance(data_linha, datetime):
-            data_linha = data_linha.date()
-
-        if isinstance(data_linha, date) and data_linha >= dia_solicitacao_relatorio:
-            acumulado_por_lote[lote_key] = acumulado_por_lote.get(lote_key, 0.0) + custo_diario
-            custo_acumulado = acumulado_por_lote[lote_key]
-        else:
-            custo_acumulado = 0.0
 
         consumo_acumulado_por_fase[fase_key] = consumo_acumulado_por_fase.get(fase_key, 0.0) + consumo_diario
 
         linha["Custo de Racao Diario"] = custo_diario
-        linha["Custo de Racao Acumulado"] = custo_acumulado
         linha["Fase Nutricional"] = fase
         
         # Cria uma coluna específica para a Fase para não quebrar a matemática da TCA Acumulada
@@ -679,7 +669,26 @@ def adicionar_custos_racao(
         
         resultado.append(linha)
 
-    return resultado
+    if not resultado:
+        return resultado
+
+    df_resultado = pd.DataFrame(resultado)
+    df_resultado = df_resultado.sort_values(["Produtor", "Tanque", "Data"], kind="mergesort")
+
+    data_linha = pd.to_datetime(df_resultado["Data"])
+    data_ref = pd.to_datetime(dia_solicitacao_relatorio)
+    df_resultado["_custo_diario_para_acumulo"] = np.where(
+        data_linha >= data_ref,
+        df_resultado["Custo de Racao Diario"].fillna(0.0),
+        0.0,
+    )
+    df_resultado["Custo de Racao Acumulado"] = (
+        df_resultado.groupby(["Produtor", "Tanque"], sort=False)["_custo_diario_para_acumulo"]
+        .cumsum()
+    )
+    df_resultado.drop(columns="_custo_diario_para_acumulo", inplace=True)
+
+    return df_resultado.to_dict("records")
 
 
 def colunas_plantel(tabela: CsvTable) -> dict[str, str | None]:

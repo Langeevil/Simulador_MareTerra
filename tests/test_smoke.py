@@ -19,7 +19,7 @@ app = importlib.util.module_from_spec(APP_SPEC)
 sys.modules["app_module"] = app
 APP_SPEC.loader.exec_module(app)
 
-from simulador_aquicola import definir_status, preparar_parametros_gerenciais
+from simulador_aquicola import FaixaRacao, adicionar_custos_racao, definir_status, preparar_parametros_gerenciais
 
 
 class SimuladorSmokeTests(unittest.TestCase):
@@ -73,6 +73,59 @@ class SimuladorSmokeTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "sem colunas obrigatorias"):
             preparar_parametros_gerenciais(df.drop(columns=["volume_kg"]))
+
+    def test_custo_acumulado_uses_report_date_and_lote_group(self) -> None:
+        registros = [
+            {
+                "Produtor": "Prod A",
+                "Tanque": "T1",
+                "Data": date(2026, 6, 2),
+                "Peso Medio (g)": 100.0,
+                "Quantidade de Peixes": 1000,
+                "Consumo de Racao Diario (kg)": 20.0,
+            },
+            {
+                "Produtor": "Prod A",
+                "Tanque": "T1",
+                "Data": date(2026, 5, 31),
+                "Peso Medio (g)": 100.0,
+                "Quantidade de Peixes": 1000,
+                "Consumo de Racao Diario (kg)": 10.0,
+            },
+            {
+                "Produtor": "Prod A",
+                "Tanque": "T2",
+                "Data": date(2026, 6, 1),
+                "Peso Medio (g)": 100.0,
+                "Quantidade de Peixes": 1000,
+                "Consumo de Racao Diario (kg)": 7.0,
+            },
+            {
+                "Produtor": "Prod A",
+                "Tanque": "T1",
+                "Data": date(2026, 6, 1),
+                "Peso Medio (g)": 100.0,
+                "Quantidade de Peixes": 1000,
+                "Consumo de Racao Diario (kg)": 5.0,
+            },
+        ]
+        faixas = [FaixaRacao(0.0, 200.0, 2.0, "Inicial")]
+
+        resultado = adicionar_custos_racao(registros, faixas, date(2026, 6, 1))
+
+        self.assertEqual(
+            [(row["Tanque"], row["Data"]) for row in resultado],
+            [
+                ("T1", date(2026, 5, 31)),
+                ("T1", date(2026, 6, 1)),
+                ("T1", date(2026, 6, 2)),
+                ("T2", date(2026, 6, 1)),
+            ],
+        )
+        self.assertEqual(
+            [row["Custo de Racao Acumulado"] for row in resultado],
+            [0.0, 10.0, 50.0, 14.0],
+        )
 
     def test_regional_po_and_saldo(self) -> None:
         mes = "Mês"
