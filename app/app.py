@@ -143,12 +143,20 @@ def configure_page() -> None:
         .stTabs [data-baseweb="tab-list"] { gap: 10px; border-bottom: 1px solid #E7D8B5; }
         .stTabs [data-baseweb="tab"] { 
             height: 50px; padding: 0 16px; background-color: transparent; 
-            border-radius: 6px 6px 0 0; color: #5C6470; font-weight: 600; 
+            border-radius: 6px 6px 0 0; color: var(--text-color) !important; font-weight: 600; 
             transition: all 0.2s ease-in-out;
+        }
+        .stTabs [data-baseweb="tab"] p,
+        .stTabs [data-baseweb="tab"] span {
+            color: var(--text-color) !important;
         }
         .stTabs [aria-selected="true"] { 
             background-color: rgba(188, 147, 63, 0.15) !important; 
-            color: #17413B !important; border-bottom: 3px solid #17413B !important; 
+            color: var(--text-color) !important; border-bottom: 3px solid #17413B !important; 
+        }
+        .stTabs [aria-selected="true"] p,
+        .stTabs [aria-selected="true"] span {
+            color: var(--text-color) !important;
         }
         </style>
         """,
@@ -802,7 +810,7 @@ def styled_report_dataframe(df: pd.DataFrame) -> pd.io.formats.style.Styler:
             ] * size
         if "parceria" in label:
             return [
-                "background-color: rgba(23, 65, 59, 0.6); color: #111827; font-weight: 800;"
+                "background-color: #748D89; color: #111827; font-weight: 800;"
             ] * size
         if label == "dias de abate":
             return [
@@ -818,22 +826,22 @@ def styled_report_dataframe(df: pd.DataFrame) -> pd.io.formats.style.Styler:
             ] * size
         if "total" in label:
             return [
-                "background-color: rgba(23, 65, 59, 0.15); color: #111827; font-weight: 800;"
+                "background-color: #DCE2E2; color: #111827; font-weight: 800;"
             ] * size
         if "saldo" in label:
             return [
-                "background-color: rgba(188, 147, 63, 0.2); color: #111827; font-weight: 800;"
+                "background-color: #F2E9D9; color: #111827; font-weight: 800;"
             ] * size
         if label in {"po", "po atualizado"} or "po atualizado" in label:
             return [
-                "background-color: rgba(188, 147, 63, 0.15); color: #111827; font-weight: 800;"
+                "background-color: #F5EFE2; color: #111827; font-weight: 800;"
             ] * size
         if any(marker in label for marker in ["biometria", "liberado", "disponivel", "disponível"]):
             return [
-                "background-color: rgba(23, 65, 59, 0.15); color: #111827; font-weight: 800;"
+                "background-color: #DCE2E2; color: #111827; font-weight: 800;"
             ] * size
         if isinstance(row.name, int) and row.name % 2 == 0:
-            return ["background-color: rgba(188, 147, 63, 0.1); color: #111827;"] * size
+            return ["background-color: #F8F4EC; color: #111827;"] * size
         return ["background-color: #FFFFFF; color: #111827;"] * size
 
     return (
