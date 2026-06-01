@@ -29,6 +29,7 @@ for import_dir in (SRC_DIR, APP_DIR):
         sys.path.insert(0, str(import_dir))
 
 from theme_config import PatternName, normalize_label, style_dark_regional_report
+from theme_consolidado import style_consolidado_dataframe
 
 # Tentativa de importação do motor da simulação
 try:
@@ -1174,7 +1175,12 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
             for col, label in zip(metric_cols, chart_consolidado.columns[:3]):
                 col.metric(label, format_br_number(ultimo_valor_relevante(chart_consolidado[label]), 0))
             render_line_chart(chart_consolidado, "Consolidado APT + ITA", "Valor consolidado")
-        render_report_dataframe(df_consolidado_raw, height=720)
+        display_consolidado = format_df_for_display(df_consolidado_raw)
+        st.dataframe(
+            style_consolidado_dataframe(display_consolidado, label_column="Conteúdo / Bloco"),
+            use_container_width=True,
+            height=720,
+        )
 
 def render_common_settings() -> tuple[date, str, bool]:
     st.subheader("Configurações da simulação")
