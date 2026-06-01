@@ -1076,6 +1076,9 @@ def render_management_inputs(
         if salvar_parametros:
             save_path.parent.mkdir(parents=True, exist_ok=True)
             save_path.write_bytes(parametros_csv)
+            st.session_state["df_metas"] = df_metas_editado.copy()
+            st.session_state["df_terceiros"] = df_terceiros_editado.copy()
+            st.session_state["meses_visiveis"] = list(meses_visiveis)
             st.session_state[f"{key_prefix}_parametros_file_mtime_ns"] = save_path.stat().st_mtime_ns
             st.session_state[f"{key_prefix}_parametros_override_bytes"] = parametros_csv
             st.session_state[saved_toast_key] = True
