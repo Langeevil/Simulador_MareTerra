@@ -1,6 +1,4 @@
 ﻿tipo;mes;regiao;dias_abate;po_diario_kg;classe;produtor;volume_kg
-meta;2026-05;APT;21;90000;;;
-meta;2026-05;ITA;21;45000;;;
 meta;2026-06;APT;21;90000;;;
 meta;2026-06;ITA;21;45000;;;
 meta;2026-07;APT;21;90000;;;
@@ -23,3 +21,5 @@ meta;2027-03;APT;21;90000;;;
 meta;2027-03;ITA;21;45000;;;
 meta;2027-04;APT;21;90000;;;
 meta;2027-04;ITA;21;45000;;;
+meta;2027-05;APT;21;90000;;;
+meta;2027-05;ITA;21;45000;;;

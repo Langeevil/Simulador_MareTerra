@@ -31,7 +31,8 @@ COLORS: dict[ColorName, str] = {
     "dark_gray": "#757171",
     "white": "#FFFFFF",
     "near_black": "#111827",
-    "brown": "#FBBF24",
+    # "brown": "#FBBF24",
+    "brown": "#111827",
 }
 
 
@@ -53,8 +54,8 @@ TABLE_PATTERNS: dict[PatternName, TablePattern] = {
         header_footer_text=COLORS["white"],
         odd_background=COLORS["white"],
         odd_text=COLORS["near_black"],
-        even_background=COLORS["dark_gray"],
-        even_text=COLORS["white"],
+        even_background=COLORS["medium_gray"],
+        even_text=COLORS["near_black"],
     ),
     "B": TablePattern(
         name="B",
@@ -62,16 +63,16 @@ TABLE_PATTERNS: dict[PatternName, TablePattern] = {
         header_footer_text=COLORS["white"],
         odd_background=COLORS["white"],
         odd_text=COLORS["near_black"],
-        even_background=COLORS["dark_gray"],
+        even_background=COLORS["medium_gray"],
         even_text=COLORS["brown"],
     ),
     "C": TablePattern(
         name="C",
-        header_footer_background=COLORS["medium_gray"],
+        header_footer_background=COLORS["dark_gray"],
         header_footer_text=COLORS["white"],
         odd_background=COLORS["white"],
         odd_text=COLORS["near_black"],
-        even_background=COLORS["dark_gray"],
+        even_background=COLORS["medium_gray"],
         even_text=COLORS["brown"],
     ),
 }
@@ -253,13 +254,13 @@ def style_dark_regional_report(
                         ("color", COLORS["plot_header_text"]),
                         ("font-weight", "800"),
                         ("text-align", "center"),
-                        ("border-bottom", f"1px solid {COLORS['dark_gray']}"),
+                        ("border-bottom", f"1px solid {COLORS['medium_gray']}"),
                     ],
                 },
                 {
                     "selector": "td",
                     "props": [
-                        ("border-color", COLORS["dark_gray"]),
+                        ("border-color", COLORS["medium_gray"]),
                     ],
                 },
             ]
