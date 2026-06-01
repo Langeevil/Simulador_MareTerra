@@ -1067,7 +1067,7 @@ def render_management_inputs(
         if salvar_parametros:
             save_path.parent.mkdir(parents=True, exist_ok=True)
             save_path.write_bytes(parametros_csv)
-            st.success(f"parametros_gerenciais.csv atualizado com metas, dias de abate e transferências em: {save_path}")
+            st.toast("parametros_gerenciais.csv salvo com sucesso.", icon="✅")
 
     return df_metas_editado, df_terceiros_editado, meses_visiveis
 
