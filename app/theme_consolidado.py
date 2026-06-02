@@ -134,7 +134,7 @@ def _row_background_style(
             CONSOLIDADO_COLORS["gold"],
             CONSOLIDADO_COLORS["white"],
             font_weight="900",
-            text_align="center",
+            text_align="left",
         )
 
     if _is_gold_row(label):

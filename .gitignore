@@ -11,3 +11,5 @@ build/
 dist/
 *.spec
 SimuladorBiomassa.exe
+data/output/old/*
+data/input/old/*

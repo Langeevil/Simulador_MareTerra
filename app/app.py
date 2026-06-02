@@ -595,19 +595,19 @@ def process_consolidated_data(
     def empty_row() -> dict[str, object]:
         return {col: "" for col in ["Conteúdo / Bloco"] + months}
 
-    def title_cells(title: str, *, skip_first_word: bool = False) -> dict[str, str]:
-        words = re.findall(r"[^\s/\-]+", title)
-        if skip_first_word:
-            words = words[1:]
+    def title_cells(parts: list[str]) -> dict[str, str]:
         if not months:
             return {}
-        if len(words) > len(months):
-            words = [*words[: len(months) - 1], " ".join(words[len(months) - 1:])]
-        words = [*words, *([""] * (len(months) - len(words)))]
-        return dict(zip(months, words))
+        if len(parts) > len(months):
+            parts = [*parts[: len(months) - 1], " ".join(parts[len(months) - 1:])]
+        parts = [*parts, *([""] * (len(months) - len(parts)))]
+        return dict(zip(months, parts))
 
-    def title_row(label: str, title: str, *, skip_first_word: bool = False) -> dict[str, object]:
-        return {"Conteúdo / Bloco": label, **title_cells(title, skip_first_word=skip_first_word)}
+    def title_row(label: str, availability: str, period: str, region: str) -> dict[str, object]:
+        return {
+            "Conteúdo / Bloco": label,
+            **title_cells(["QUADRO DE", availability.upper(), f"PARA O ABATE {period.upper()}", region.upper()]),
+        }
 
     def row_values(source: pd.DataFrame, label: str) -> dict[str, float]:
         if source.empty or "Conteúdo / Bloco" not in source.columns:
@@ -674,8 +674,14 @@ def process_consolidated_data(
         "peso_medio": weighted_avg_weight("ITA"),
     }
 
-    def regional_block(region_name: str, title: str, data: dict[str, dict[str, float]]) -> None:
-        output_rows.append(title_row(region_name, title))
+    def regional_block(
+        region_name: str,
+        data: dict[str, dict[str, float]],
+        *,
+        availability: str,
+        region_code: str,
+    ) -> None:
+        output_rows.append(title_row(region_name, availability, "Dia", region_code))
         output_rows.append({"Conteúdo / Bloco": "Dias de Abate", **data["dias"]})
         output_rows.append({"Conteúdo / Bloco": "Kg/Dia Próprio", **data["kg_proprio"]})
         output_rows.append({"Conteúdo / Bloco": "Kg/Dia Integração", **data["kg_integracao"]})
@@ -690,8 +696,8 @@ def process_consolidated_data(
         output_rows.append({"Conteúdo / Bloco": "Peso Médio", **data["peso_medio"]})
         output_rows.append(empty_row())
 
-    regional_block("APT", "QUADRO DE DISPONIBILIDADE PARA O ABATE / DIA - APT", apt)
-    regional_block("ITAPORÃ", "QUADRO DE DISPONIBILIDADE DE BIOMASSA PARA O ABATE POR DIA - ITA", ita)
+    regional_block("APT", apt, availability="Disponibilidade", region_code="APT")
+    regional_block("ITAPORÃ", ita, availability="Disponibilidade de Biomassa", region_code="ITA")
 
     geral_total_dia = sum_series(apt["total_dia"], ita["total_dia"])
     geral_po = sum_series(apt["po"], ita["po"])
@@ -715,7 +721,7 @@ def process_consolidated_data(
     )
     geral_saldo_acm = df_geral_saldo_mes.set_index("Mês")["Saldo Acm Atualizado / mês"].to_dict()
 
-    output_rows.append(title_row("QUADRO", "QUADRO DE DISPONIBILIDADE PARA O ABATE / DIA - GERAL", skip_first_word=True))
+    output_rows.append(title_row("QUADRO", "Disponibilidade", "Dia", "GERAL"))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Dia Disponível Abate", **geral_total_dia})
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **geral_po})
     output_rows.append({"Conteúdo / Bloco": "PO", **geral_po})
@@ -723,7 +729,7 @@ def process_consolidated_data(
     output_rows.append({"Conteúdo / Bloco": "Saldo PO", **geral_saldo_dia})
     output_rows.append(empty_row())
 
-    output_rows.append(title_row("QUADRO", "QUADRO DE DISPONIBILIDADE PARA O ABATE / MÊS - GERAL", skip_first_word=True))
+    output_rows.append(title_row("QUADRO", "Disponibilidade", "Mês", "GERAL"))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Mês Disponível Abate", **geral_total_mes})
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado (No mês) Saldo", **geral_saldo_mes})
     output_rows.append({"Conteúdo / Bloco": "Saldo PO Atual. x Disponível", **geral_saldo_mes})
