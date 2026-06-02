@@ -595,6 +595,20 @@ def process_consolidated_data(
     def empty_row() -> dict[str, object]:
         return {col: "" for col in ["Conteúdo / Bloco"] + months}
 
+    def title_cells(title: str, *, skip_first_word: bool = False) -> dict[str, str]:
+        words = re.findall(r"[^\s/\-]+", title)
+        if skip_first_word:
+            words = words[1:]
+        if not months:
+            return {}
+        if len(words) > len(months):
+            words = [*words[: len(months) - 1], " ".join(words[len(months) - 1:])]
+        words = [*words, *([""] * (len(months) - len(words)))]
+        return dict(zip(months, words))
+
+    def title_row(label: str, title: str, *, skip_first_word: bool = False) -> dict[str, object]:
+        return {"Conteúdo / Bloco": label, **title_cells(title, skip_first_word=skip_first_word)}
+
     def row_values(source: pd.DataFrame, label: str) -> dict[str, float]:
         if source.empty or "Conteúdo / Bloco" not in source.columns:
             return {m: 0.0 for m in months}
@@ -661,7 +675,7 @@ def process_consolidated_data(
     }
 
     def regional_block(region_name: str, title: str, data: dict[str, dict[str, float]]) -> None:
-        output_rows.append({"Conteúdo / Bloco": region_name, **{m: title for m in months}})
+        output_rows.append(title_row(region_name, title))
         output_rows.append({"Conteúdo / Bloco": "Dias de Abate", **data["dias"]})
         output_rows.append({"Conteúdo / Bloco": "Kg/Dia Próprio", **data["kg_proprio"]})
         output_rows.append({"Conteúdo / Bloco": "Kg/Dia Integração", **data["kg_integracao"]})
@@ -701,7 +715,7 @@ def process_consolidated_data(
     )
     geral_saldo_acm = df_geral_saldo_mes.set_index("Mês")["Saldo Acm Atualizado / mês"].to_dict()
 
-    output_rows.append({"Conteúdo / Bloco": "QUADRO DE DISPONIBILIDADE PARA O ABATE / DIA - GERAL", **{m: "" for m in months}})
+    output_rows.append(title_row("QUADRO", "QUADRO DE DISPONIBILIDADE PARA O ABATE / DIA - GERAL", skip_first_word=True))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Dia Disponível Abate", **geral_total_dia})
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **geral_po})
     output_rows.append({"Conteúdo / Bloco": "PO", **geral_po})
@@ -709,7 +723,7 @@ def process_consolidated_data(
     output_rows.append({"Conteúdo / Bloco": "Saldo PO", **geral_saldo_dia})
     output_rows.append(empty_row())
 
-    output_rows.append({"Conteúdo / Bloco": "QUADRO DE DISPONIBILIDADE PARA O ABATE / MÊS - GERAL", **{m: "" for m in months}})
+    output_rows.append(title_row("QUADRO", "QUADRO DE DISPONIBILIDADE PARA O ABATE / MÊS - GERAL", skip_first_word=True))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Mês Disponível Abate", **geral_total_mes})
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado (No mês) Saldo", **geral_saldo_mes})
     output_rows.append({"Conteúdo / Bloco": "Saldo PO Atual. x Disponível", **geral_saldo_mes})
@@ -789,6 +803,37 @@ def format_df_for_display(df: pd.DataFrame) -> pd.DataFrame:
                 
         display_df[col] = formatted_col
     return display_df
+
+
+def auto_width_column_config(
+    df: pd.DataFrame,
+    *,
+    min_width: int = 92,
+    max_width: int = 420,
+    label_min_width: int = 260,
+    label_max_width: int = 520,
+) -> dict[str, object]:
+    """Define larguras por coluna com base no maior texto exibido."""
+
+    def visible_text_length(value: object) -> int:
+        if pd.isna(value):
+            return 0
+        text = str(value)
+        return max((len(part) for part in text.splitlines()), default=0)
+
+    column_config: dict[str, object] = {}
+    for column in df.columns:
+        header = str(column)
+        max_chars = max([visible_text_length(header), *df[column].map(visible_text_length).tolist()])
+
+        if normalize_label(header) == "conteudo / bloco":
+            width = max(label_min_width, min(label_max_width, (max_chars * 8) + 36))
+        else:
+            width = max(min_width, min(max_width, (max_chars * 8) + 36))
+
+        column_config[header] = st.column_config.Column(header, width=int(width))
+
+    return column_config
 
 
 def dataframe_for_chart(df: pd.DataFrame, labels: list[str]) -> pd.DataFrame:
@@ -944,9 +989,15 @@ def render_report_dataframe(
     use_dark_theme: bool = False,
 ) -> None:
     display_df = format_df_for_display(df)
+    column_config = auto_width_column_config(display_df)
 
     if not use_dark_theme:
-        st.dataframe(styled_report_dataframe(display_df), use_container_width=True, height=height)
+        st.dataframe(
+            styled_report_dataframe(display_df),
+            use_container_width=True,
+            height=height,
+            column_config=column_config,
+        )
         return
 
     try:
@@ -955,7 +1006,7 @@ def render_report_dataframe(
         st.warning(f"Nao foi possivel aplicar o tema escuro regional: {exc}")
         styler = styled_report_dataframe(display_df)
 
-    st.dataframe(styler, use_container_width=True, height=height)
+    st.dataframe(styler, use_container_width=True, height=height, column_config=column_config)
 
 
 def _col_letter(col_idx: int) -> str:
@@ -1194,7 +1245,12 @@ def render_spreadsheet_audit() -> None:
             st.success("Nenhum problema evidente encontrado nas fórmulas auditadas.")
         else:
             st.warning(f"Foram encontrados {len(issues)} ponto(s) para revisão.")
-            st.dataframe(issues, use_container_width=True, hide_index=True)
+            st.dataframe(
+                issues,
+                use_container_width=True,
+                hide_index=True,
+                column_config=auto_width_column_config(issues),
+            )
 
 
 def curvas_cluster_dataframe_from_path(path: Path) -> pd.DataFrame:
@@ -1245,7 +1301,13 @@ def render_curve_programs_preview(curvas_df: pd.DataFrame) -> None:
             .reset_index(drop=True)
         )
         height = min(620, max(260, 38 * (len(display_df) + 1)))
-        st.dataframe(display_df, use_container_width=True, hide_index=True, height=height)
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            height=height,
+            column_config=auto_width_column_config(display_df),
+        )
 
 # ==========================================
 # GERAÇÃO DO DASHBOARD E INTERFACE PRINCIPAL
@@ -1335,6 +1397,7 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
             style_consolidado_dataframe(display_consolidado, label_column="Conteúdo / Bloco"),
             use_container_width=True,
             height=720,
+            column_config=auto_width_column_config(display_consolidado),
         )
 
 def render_common_settings() -> tuple[date, str, bool]:
