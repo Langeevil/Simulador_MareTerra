@@ -25,10 +25,12 @@ import streamlit as st
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
 APP_DIR = ROOT_DIR / "app"
-for import_dir in (SRC_DIR, APP_DIR):
+MATH_DIR = ROOT_DIR / "math"
+for import_dir in (SRC_DIR, APP_DIR, MATH_DIR):
     if str(import_dir) not in sys.path:
         sys.path.insert(0, str(import_dir))
 
+from calculos_saldo import calcular_saldo_acumulado_mes
 from theme_config import PatternName, normalize_label, style_dark_regional_report
 from theme_consolidado import style_consolidado_dataframe
 
@@ -558,12 +560,18 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
     
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **po_diario})
     output_rows.append({"Conteúdo / Bloco": "Saldo Atualizado / dia", **saldo_dia})
-    
-    saldo_acm = {}
-    running_acm = 0.0
-    for m in months:
-        running_acm += saldo_dia[m] * dias_abate[m]
-        saldo_acm[m] = running_acm
+
+    df_saldo_mes = pd.DataFrame({"Mês": months})
+    df_saldo_mes["Região"] = region
+    df_saldo_mes["Saldo Atualizado / dia"] = df_saldo_mes["Mês"].map(saldo_dia)
+    df_saldo_mes["Dias de Abate"] = df_saldo_mes["Mês"].map(dias_abate)
+    df_saldo_mes["Saldo Acm Atualizado / mês"] = calcular_saldo_acumulado_mes(
+        df_saldo_mes,
+        col_saldo_dia="Saldo Atualizado / dia",
+        col_dias_abate="Dias de Abate",
+        col_agrupamento="Região",
+    )
+    saldo_acm = df_saldo_mes.set_index("Mês")["Saldo Acm Atualizado / mês"].to_dict()
         
     output_rows.append({"Conteúdo / Bloco": "Saldo Acm Atualizado / mês", **saldo_acm})
 
@@ -680,7 +688,18 @@ def process_consolidated_data(
         multiply_series(ita["po"], ita["dias"]),
     )
     geral_saldo_mes = diff_series(geral_total_mes, geral_abate_po_mes)
-    geral_saldo_acm = sum_series(apt["saldo_acm"], ita["saldo_acm"])
+    geral_dias_abate = apt["dias"]
+    df_geral_saldo_mes = pd.DataFrame({"Mês": months})
+    df_geral_saldo_mes["Grupo"] = "GERAL"
+    df_geral_saldo_mes["Saldo PO Atualizado"] = df_geral_saldo_mes["Mês"].map(geral_saldo_dia)
+    df_geral_saldo_mes["Dias de Abate"] = df_geral_saldo_mes["Mês"].map(geral_dias_abate)
+    df_geral_saldo_mes["Saldo Acm Atualizado / mês"] = calcular_saldo_acumulado_mes(
+        df_geral_saldo_mes,
+        col_saldo_dia="Saldo PO Atualizado",
+        col_dias_abate="Dias de Abate",
+        col_agrupamento="Grupo",
+    )
+    geral_saldo_acm = df_geral_saldo_mes.set_index("Mês")["Saldo Acm Atualizado / mês"].to_dict()
 
     output_rows.append({"Conteúdo / Bloco": "QUADRO DE DISPONIBILIDADE PARA O ABATE / DIA - GERAL", **{m: "" for m in months}})
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Dia Disponível Abate", **geral_total_dia})
