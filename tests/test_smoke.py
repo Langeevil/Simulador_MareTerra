@@ -67,6 +67,25 @@ class SimuladorSmokeTests(unittest.TestCase):
         self.assertTrue(pd.isna(metas.loc[0, "PO Diário ITA (kg)"]))
         self.assertTrue(terceiros.empty)
 
+    def test_parametros_decimal_dot_does_not_gain_zeroes_on_export(self) -> None:
+        csv_bytes = (
+            "tipo;mes;regiao;dias_abate;po_diario_kg;classe;produtor;volume_kg\n"
+            "meta;2026-06;APT;20.0;90000.0;;;\n"
+            "meta;2026-06;ITA;21;45.000;;;\n"
+            "transferencia;2026-06;APT;;;Parceria;Prod X;2500.0\n"
+        ).encode("utf-8-sig")
+        metas, terceiros = app.parse_parametros_gerenciais(csv_bytes, date(2026, 6, 1), 12)
+        self.assertEqual(float(metas.loc[0, "Dias Abate APT"]), 20.0)
+        self.assertEqual(float(metas.loc[0, "PO Diário APT (kg)"]), 90000.0)
+        self.assertEqual(float(metas.loc[0, "PO Diário ITA (kg)"]), 45000.0)
+
+        exported = app.parametros_gerenciais_to_csv(metas, terceiros).decode("utf-8-sig")
+        self.assertIn("meta;2026-06;APT;20;90000;;;", exported)
+        self.assertIn("meta;2026-06;ITA;21;45000;;;", exported)
+        self.assertIn("transferencia;2026-06;APT;;;Parceria;Prod X;2500", exported)
+        self.assertNotIn("200", exported)
+        self.assertNotIn("900000", exported)
+
     def test_parametros_backend_split_and_validation(self) -> None:
         df = pd.DataFrame({
             "tipo": ["meta", "transferencia"],

@@ -345,13 +345,25 @@ def empty_management_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     return pd.DataFrame(columns=METAS_COLUMNS), pd.DataFrame(columns=TERCEIROS_COLUMNS)
 
 
-def numeric_or_blank(valor: object) -> float | None:
-    numero = pd.to_numeric(str(valor).replace(".", "").replace(",", "."), errors="coerce")
-    return float(numero) if pd.notna(numero) else None
+def integer_or_blank(valor: object) -> int | None:
+    texto = str(valor).strip()
+    if "," in texto:
+        texto = texto.replace(".", "").replace(",", ".")
+    elif "." in texto:
+        partes = texto.split(".")
+        if len(partes) > 2 or (len(partes) == 2 and len(partes[1]) == 3 and len(partes[0]) <= 3):
+            texto = texto.replace(".", "")
+    numero = pd.to_numeric(texto, errors="coerce")
+    return int(round(float(numero))) if pd.notna(numero) else None
 
 
-def csv_value_or_blank(valor: object) -> object:
-    return "" if pd.isna(valor) else valor
+def csv_numero_or_blank(valor: object) -> object:
+    if pd.isna(valor):
+        return ""
+    numero = integer_or_blank(valor)
+    if numero is None:
+        return ""
+    return str(numero)
 
 
 def parse_parametros_gerenciais(csv_bytes: bytes, data_inicio: date, num_meses: int = 12) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -381,7 +393,7 @@ def parse_parametros_gerenciais(csv_bytes: bytes, data_inicio: date, num_meses: 
         if mes not in set(df_metas["Mês"]) or regiao not in {"APT", "ITA"}:
             continue
         idx = df_metas["Mês"] == mes
-        df_metas.loc[idx, f"PO Diário {regiao} (kg)"] = numeric_or_blank(row.get("po_diario_kg", ""))
+        df_metas.loc[idx, f"PO Diário {regiao} (kg)"] = integer_or_blank(row.get("po_diario_kg", ""))
 
     for _, row in abate.iterrows():
         mes = str(row.get("mes", "")).strip()
@@ -389,7 +401,7 @@ def parse_parametros_gerenciais(csv_bytes: bytes, data_inicio: date, num_meses: 
         if mes not in set(df_metas["Mês"]) or regiao not in {"APT", "ITA"}:
             continue
         idx = df_metas["Mês"] == mes
-        df_metas.loc[idx, f"Dias Abate {regiao}"] = numeric_or_blank(row.get("dias_abate", ""))
+        df_metas.loc[idx, f"Dias Abate {regiao}"] = integer_or_blank(row.get("dias_abate", ""))
 
     rows = []
     for _, row in transferencias.iterrows():
@@ -401,7 +413,7 @@ def parse_parametros_gerenciais(csv_bytes: bytes, data_inicio: date, num_meses: 
                 "Classe": str(row.get("classe", "")).strip(),
                 "Produtor": str(row.get("produtor", "")).strip(),
                 "Mês": mes,
-                "Volume (kg)": numeric_or_blank(row.get("volume_kg", "")),
+                "Volume (kg)": integer_or_blank(row.get("volume_kg", "")),
             })
     df_terceiros = pd.DataFrame(rows, columns=TERCEIROS_COLUMNS)
     return df_metas, df_terceiros
@@ -416,8 +428,8 @@ def parametros_gerenciais_to_csv(df_metas: pd.DataFrame, df_terceiros: pd.DataFr
                 "tipo": "meta",
                 "mes": mes,
                 "regiao": regiao,
-                "dias_abate": csv_value_or_blank(row.get(f"Dias Abate {regiao}", "")),
-                "po_diario_kg": csv_value_or_blank(row.get(f"PO Diário {regiao} (kg)", "")),
+                "dias_abate": csv_numero_or_blank(row.get(f"Dias Abate {regiao}", "")),
+                "po_diario_kg": csv_numero_or_blank(row.get(f"PO Diário {regiao} (kg)", "")),
                 "classe": "",
                 "produtor": "",
                 "volume_kg": "",
@@ -432,7 +444,7 @@ def parametros_gerenciais_to_csv(df_metas: pd.DataFrame, df_terceiros: pd.DataFr
                 "po_diario_kg": "",
                 "classe": row.get("Classe", ""),
                 "produtor": row.get("Produtor", ""),
-                "volume_kg": csv_value_or_blank(row.get("Volume (kg)", "")),
+                "volume_kg": csv_numero_or_blank(row.get("Volume (kg)", "")),
             })
     buffer = io.StringIO()
     pd.DataFrame(rows).to_csv(buffer, sep=';', index=False)
@@ -1023,10 +1035,10 @@ def render_management_inputs(
             key=f"{key_prefix}_metas_editor_{data_inicio.isoformat()}_{hash(parametros_bytes)}",
             column_config={
                 "Mês": st.column_config.TextColumn("Mês", disabled=True),
-                "Dias Abate APT": st.column_config.NumberColumn("Dias Abate APT", min_value=1, step=1),
-                "PO Diário APT (kg)": st.column_config.NumberColumn("PO Diário APT (kg)", min_value=0, step=1000),
-                "Dias Abate ITA": st.column_config.NumberColumn("Dias Abate ITA", min_value=1, step=1),
-                "PO Diário ITA (kg)": st.column_config.NumberColumn("PO Diário ITA (kg)", min_value=0, step=1000),
+                "Dias Abate APT": st.column_config.NumberColumn("Dias Abate APT", min_value=1, step=1, format="%d"),
+                "PO Diário APT (kg)": st.column_config.NumberColumn("PO Diário APT (kg)", min_value=0, step=1000, format="%d"),
+                "Dias Abate ITA": st.column_config.NumberColumn("Dias Abate ITA", min_value=1, step=1, format="%d"),
+                "PO Diário ITA (kg)": st.column_config.NumberColumn("PO Diário ITA (kg)", min_value=0, step=1000, format="%d"),
             },
         )
 
@@ -1041,7 +1053,7 @@ def render_management_inputs(
                 "Região Destino": st.column_config.SelectboxColumn("Região Destino", options=["APT", "ITA"], required=True),
                 "Classe": st.column_config.SelectboxColumn("Classe", options=["Próprio", "Integração", "Parceria"], required=True),
                 "Mês": st.column_config.SelectboxColumn("Mês", options=meses, required=True),
-                "Volume (kg)": st.column_config.NumberColumn("Volume (kg)", required=True, step=1000.0),
+                "Volume (kg)": st.column_config.NumberColumn("Volume (kg)", required=True, step=1000, format="%d"),
                 "Produtor": st.column_config.TextColumn("Produtor", required=True)
             },
             key=f"{key_prefix}_terceiros_editor_{data_inicio.isoformat()}_{hash(parametros_bytes)}"
