@@ -860,6 +860,8 @@ def render_line_chart(chart_df: pd.DataFrame, title: str, y_title: str) -> None:
     if chart_df.empty:
         return
 
+    st.markdown(f"#### {title}")
+
     chart_data = (
         chart_df.reset_index(names="Mês")
         .melt(id_vars="Mês", var_name="Indicador", value_name="Valor")
@@ -882,8 +884,7 @@ def render_line_chart(chart_df: pd.DataFrame, title: str, y_title: str) -> None:
                 alt.Tooltip("Valor:Q", title=y_title, format=",.2f"),
             ],
         )
-        .properties(title=title, height=320)
-        .configure_title(anchor="start", fontSize=16, fontWeight="bold")
+        .properties(height=320)
         .configure_axis(labelFontSize=12, titleFontSize=13)
         .configure_legend(labelFontSize=12, titleFontSize=12)
     )

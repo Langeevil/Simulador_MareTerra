@@ -15,7 +15,7 @@ CONSOLIDADO_COLORS = {
     "near_black": COLORS["near_black"],
     "light_gray": "#E7E7E7",
     "medium_gray": COLORS["medium_gray"],
-    "negative": "#FF0000",
+    "negative": "#0E1421",
     "transparent": COLORS["transparent"],
 }
 
