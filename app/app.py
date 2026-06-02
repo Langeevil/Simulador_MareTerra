@@ -604,9 +604,14 @@ def process_consolidated_data(
         return dict(zip(months, parts))
 
     def title_row(label: str, availability: str, period: str, region: str) -> dict[str, object]:
+        availability_parts = (
+            ["DISPONIBILIDADE", "DE BIOMASSA"]
+            if normalize_label(availability) == "disponibilidade de biomassa"
+            else [availability.upper()]
+        )
         return {
             "Conteúdo / Bloco": label,
-            **title_cells(["QUADRO DE", availability.upper(), f"PARA O ABATE {period.upper()}", region.upper()]),
+            **title_cells(["QUADRO DE", *availability_parts, f"PARA O ABATE {period.upper()}", region.upper()]),
         }
 
     def row_values(source: pd.DataFrame, label: str) -> dict[str, float]:
@@ -697,7 +702,7 @@ def process_consolidated_data(
         output_rows.append(empty_row())
 
     regional_block("APT", apt, availability="Disponibilidade", region_code="APT")
-    regional_block("ITAPORÃ", ita, availability="Disponibilidade de Biomassa", region_code="ITA")
+    regional_block("ITA", ita, availability="Disponibilidade de Biomassa", region_code="ITA")
 
     geral_total_dia = sum_series(apt["total_dia"], ita["total_dia"])
     geral_po = sum_series(apt["po"], ita["po"])
@@ -721,7 +726,7 @@ def process_consolidated_data(
     )
     geral_saldo_acm = df_geral_saldo_mes.set_index("Mês")["Saldo Acm Atualizado / mês"].to_dict()
 
-    output_rows.append(title_row("QUADRO", "Disponibilidade", "Dia", "GERAL"))
+    output_rows.append(title_row("QUADRO DE", "Disponibilidade", "Dia", "GERAL"))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Dia Disponível Abate", **geral_total_dia})
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **geral_po})
     output_rows.append({"Conteúdo / Bloco": "PO", **geral_po})
@@ -729,7 +734,7 @@ def process_consolidated_data(
     output_rows.append({"Conteúdo / Bloco": "Saldo PO", **geral_saldo_dia})
     output_rows.append(empty_row())
 
-    output_rows.append(title_row("QUADRO", "Disponibilidade", "Mês", "GERAL"))
+    output_rows.append(title_row("QUADRO DE", "Disponibilidade", "Mês", "GERAL"))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Mês Disponível Abate", **geral_total_mes})
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado (No mês) Saldo", **geral_saldo_mes})
     output_rows.append({"Conteúdo / Bloco": "Saldo PO Atual. x Disponível", **geral_saldo_mes})
@@ -1404,7 +1409,7 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
             style_consolidado_dataframe(display_consolidado, label_column="Conteúdo / Bloco"),
             use_container_width=True,
             height=720,
-            column_config=auto_width_column_config(display_consolidado),
+            column_config=auto_width_column_config(display_consolidado, min_width=132),
         )
 
 def render_common_settings() -> tuple[date, str, bool]:

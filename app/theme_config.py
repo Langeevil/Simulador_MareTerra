@@ -27,7 +27,9 @@ COLORS: dict[ColorName, str] = {
     "plot_header_text": "#a5a7a7",
     "green_petroleum": "#17413B",
     "light_brown": "#bc933f",
-    "medium_gray": "#a6a6a6",
+    # "medium_gray": "#a6a6a6",
+    # "medium_gray": "#757575",
+    "medium_gray": "#F5F5F5",
     "dark_gray": "#757171",
     "white": "#FFFFFF",
     "near_black": "#111827",
@@ -128,7 +130,7 @@ def _section_pattern(label: str) -> PatternName | None:
     if label.startswith("quadro de disponibilidade"):
         return "B"
     if label.startswith("quadro do saldo"):
-        return "B"
+        return "C"
     return None
 
 
@@ -139,7 +141,6 @@ def _is_section_header(label: str) -> bool:
 def _is_section_footer(label: str) -> bool:
     return (
         label.startswith("total ")
-        or label.startswith("previsao disponibilidade total")
         or label.startswith("abate po atualizado total")
         or label.startswith("total kg/dia")
         or label.startswith("saldo acm atualizado")

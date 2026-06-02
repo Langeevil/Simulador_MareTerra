@@ -4,20 +4,21 @@ from typing import Any
 
 import pandas as pd
 
-from theme_config import COLORS, normalize_label
+from theme_config import COLORS, TABLE_PATTERNS, normalize_label
 
 
 CONSOLIDADO_COLORS = {
-    "gold": COLORS["light_brown"],
-    "subtotal_gray": "#757575",
-    "total_green": COLORS["green_petroleum"],
     "white": COLORS["white"],
     "near_black": COLORS["near_black"],
-    "light_gray": "#E7E7E7",
     "medium_gray": COLORS["medium_gray"],
-    "negative": "#0E1421",
+    # "negative": "#0E1421",
+    # "negative": "#2A0000",
+    # "negative": "#FF0000",
+    "negative": "#C50000",
     "transparent": COLORS["transparent"],
 }
+
+PATTERN_SEQUENCE = ("A", "B", "C")
 
 SECTION_HEADER_LABELS = {
     "apt",
@@ -32,16 +33,15 @@ GOLD_ROW_LABELS = {
 }
 
 SUBTOTAL_ROW_LABELS = {
-    "total kg/dia dispon abate",
-    "saldo po atual. x disponivel",
     "saldo po atual x disponivel",
 }
 
 FINAL_TOTAL_ROW_LABELS = {
-    "saldo po atualizado",
+    "saldo po",
     "saldo acm atualizado / mes",
     "saldo acm atualizado/mes",
     "saldo acm atualizado mes",
+    "peso medio",
 }
 
 LABEL_COLUMN_CANDIDATES = (
@@ -99,6 +99,7 @@ def _row_label(row: pd.Series, label_column: str | None) -> str:
         value = row.get(label_column)
         if pd.notna(value) and str(value).strip():
             return normalize_label(value)
+        return ""
     return _normalized_index_label(row.name)
 
 
@@ -107,7 +108,8 @@ def _is_section_header(label: str) -> bool:
 
 
 def _is_subtotal(label: str) -> bool:
-    return label in SUBTOTAL_ROW_LABELS or label.startswith("total kg/dia dispon abate")
+    return label in SUBTOTAL_ROW_LABELS 
+# or label.startswith("total kg/dia dispon abate")
 
 
 def _is_final_total(label: str) -> bool:
@@ -118,37 +120,57 @@ def _is_gold_row(label: str) -> bool:
     return label in GOLD_ROW_LABELS
 
 
-def _row_background_style(
-    row: pd.Series,
-    *,
-    label_column: str | None,
-    zebra_position: int,
-) -> str:
-    label = _row_label(row, label_column)
+def _table_pattern(section_index: int):
+    pattern_name = PATTERN_SEQUENCE[section_index % len(PATTERN_SEQUENCE)]
+    return TABLE_PATTERNS[pattern_name]
 
-    if not label:
-        return _css(CONSOLIDADO_COLORS["transparent"], CONSOLIDADO_COLORS["near_black"])
 
-    if _is_section_header(label):
-        return _css(
-            CONSOLIDADO_COLORS["gold"],
-            CONSOLIDADO_COLORS["white"],
-            font_weight="900",
-            text_align="left",
-        )
+def _row_styles(df: pd.DataFrame, label_column: str | None) -> dict[Any, str]:
+    styles: dict[Any, str] = {}
+    current_pattern = None
+    section_count = 0
+    body_row_count = 0
 
-    if _is_gold_row(label):
-        return _css(CONSOLIDADO_COLORS["gold"], CONSOLIDADO_COLORS["white"], font_weight="800")
+    for index, row in df.iterrows():
+        label = _row_label(row, label_column)
 
-    if _is_subtotal(label):
-        return _css(CONSOLIDADO_COLORS["subtotal_gray"], CONSOLIDADO_COLORS["white"], font_weight="900")
+        if not label:
+            styles[index] = _css(CONSOLIDADO_COLORS["white"], CONSOLIDADO_COLORS["near_black"])
+            current_pattern = None
+            body_row_count = 0
+            continue
 
-    if _is_final_total(label):
-        return _css(CONSOLIDADO_COLORS["total_green"], CONSOLIDADO_COLORS["white"], font_weight="900")
+        if _is_section_header(label):
+            current_pattern = _table_pattern(section_count)
+            section_count += 1
+            body_row_count = 0
+            styles[index] = _css(
+                current_pattern.header_footer_background,
+                current_pattern.header_footer_text,
+                font_weight="900",
+                text_align="left",
+            )
+            continue
 
-    if zebra_position % 2 == 0:
-        return _css(CONSOLIDADO_COLORS["white"], CONSOLIDADO_COLORS["near_black"])
-    return _css(CONSOLIDADO_COLORS["light_gray"], CONSOLIDADO_COLORS["near_black"])
+        if current_pattern is None:
+            styles[index] = _css(CONSOLIDADO_COLORS["transparent"], CONSOLIDADO_COLORS["near_black"])
+            continue
+
+        if _is_gold_row(label) or _is_subtotal(label) or _is_final_total(label):
+            styles[index] = _css(
+                current_pattern.header_footer_background,
+                current_pattern.header_footer_text,
+                font_weight="900",
+            )
+            continue
+
+        body_row_count += 1
+        if body_row_count % 2 == 1:
+            styles[index] = _css(current_pattern.odd_background, current_pattern.odd_text)
+        else:
+            styles[index] = _css(current_pattern.even_background, current_pattern.even_text)
+
+    return styles
 
 
 def _is_negative(value: Any) -> bool:
@@ -181,27 +203,28 @@ def style_consolidado_dataframe(
     a cor de texto definida por totais, subtotais ou zebrado.
     """
     resolved_label_column = _resolve_label_column(df, label_column)
-    zebra_positions: dict[Any, int] = {}
-    zebra_count = 0
-
-    for index, row in df.iterrows():
-        label = _row_label(row, resolved_label_column)
-        if _is_section_header(label) or _is_gold_row(label) or _is_subtotal(label) or _is_final_total(label):
-            continue
-        zebra_positions[index] = zebra_count
-        zebra_count += 1
+    row_styles = _row_styles(df, resolved_label_column)
 
     def apply_row_style(row: pd.Series) -> list[str]:
-        style = _row_background_style(
-            row,
-            label_column=resolved_label_column,
-            zebra_position=zebra_positions.get(row.name, 0),
+        style = row_styles.get(
+            row.name,
+            _css(CONSOLIDADO_COLORS["transparent"], CONSOLIDADO_COLORS["near_black"]),
         )
         return [style] * len(row)
 
+    styler = _apply_negative_styles(df.style.apply(apply_row_style, axis=1))
+
+    if resolved_label_column:
+        styler = styler.format(
+            {
+                resolved_label_column: lambda value: ""
+                if normalize_label(value) in {"quadro de", "apt", "ita", "itapora"}
+                else value
+            }
+        )
+
     styler = (
-        _apply_negative_styles(df.style.apply(apply_row_style, axis=1))
-        .set_table_styles(
+        styler.set_table_styles(
             [
                 {
                     "selector": "table",
@@ -213,8 +236,8 @@ def style_consolidado_dataframe(
                 {
                     "selector": "th",
                     "props": [
-                        ("background-color", CONSOLIDADO_COLORS["gold"]),
-                        ("color", CONSOLIDADO_COLORS["white"]),
+                        ("background-color", COLORS["transparent"]),
+                        ("color", COLORS["plot_header_text"]),
                         ("font-weight", "900"),
                         ("text-align", "center"),
                         ("border", f"1px solid {CONSOLIDADO_COLORS['medium_gray']}"),
