@@ -51,6 +51,11 @@ APP_TITLE = "Simulador de Planejamento Aquícola - Mar & Terra"
 DEFAULT_OUTPUT = "simulacao_completa_br.csv"
 BRAND_GREEN = "#17413B"
 BRAND_GOLD = "#BC933F"
+CHART_COLORS = [
+    "#0F6B5F",  # verde petroleo da marca, mais legivel em fundo claro/escuro
+    "#D6A33A",  # dourado da marca com mais luminosidade para linhas finas
+    "#2563EB",  # azul complementar para diferenciar a terceira serie
+]
 LOGO_WHITE = ROOT_DIR / "app" / "assets" / "mar-terra-logo-branca.png"
 LOGO_BLACK = ROOT_DIR / "app" / "assets" / "mar-terra-logo-preta.png"
 REQUIRED_FILES = {
@@ -886,15 +891,21 @@ def render_line_chart(chart_df: pd.DataFrame, title: str, y_title: str) -> None:
     )
     chart = (
         alt.Chart(chart_data)
-        .mark_line(point=True, strokeWidth=2.5)
+        .mark_line(point=alt.OverlayMarkDef(filled=True, size=72), strokeWidth=3.2)
         .encode(
             x=alt.X("Mês:O", title="Mês / Tempo", sort=None, axis=alt.Axis(labelAngle=0)),
             y=alt.Y("Valor:Q", title=y_title, scale=alt.Scale(zero=False)),
             color=alt.Color(
                 "Indicador:N",
                 title="Série",
-                scale=alt.Scale(range=[BRAND_GREEN, BRAND_GOLD, "rgba(23, 65, 59, 0.6)"]),
-                legend=alt.Legend(orient="bottom", direction="horizontal", titleFontSize=12, labelFontSize=12),
+                scale=alt.Scale(range=CHART_COLORS),
+                legend=alt.Legend(
+                    orient="bottom",
+                    direction="horizontal",
+                    titleFontSize=12,
+                    labelFontSize=12,
+                    symbolSize=140,
+                ),
             ),
             tooltip=[
                 alt.Tooltip("Mês:O", title="Mês"),
