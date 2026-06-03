@@ -4,17 +4,14 @@ from typing import Any
 
 import pandas as pd
 
-from theme_config import COLORS, TABLE_PATTERNS, normalize_label
+from theme_config import COLORS, TABLE_PATTERNS, format_negative_value, normalize_label, style_negative_value
 
 
 CONSOLIDADO_COLORS = {
     "white": COLORS["white"],
     "near_black": COLORS["near_black"],
     "medium_gray": COLORS["medium_gray"],
-    "negative": "#0E1421",
-    # "negative": "#2A0000",
-    # "negative": "#FF0000",
-    # "negative": "#C50000",
+    "highlight_gray": "#757575",
     "transparent": COLORS["transparent"],
 }
 
@@ -43,6 +40,12 @@ FINAL_TOTAL_ROW_LABELS = {
     "saldo acm atualizado mes",
     "peso medio",
 }
+
+HIGHLIGHT_ROW_MARKERS = (
+    "saldo po",
+    "total",
+    "peso medio",
+)
 
 LABEL_COLUMN_CANDIDATES = (
     "Conteudo / Bloco",
@@ -103,6 +106,20 @@ def _row_label(row: pd.Series, label_column: str | None) -> str:
     return _normalized_index_label(row.name)
 
 
+def _first_column_label(row: pd.Series) -> str:
+    if row.empty:
+        return ""
+    value = row.iloc[0]
+    if pd.isna(value) or not str(value).strip():
+        return ""
+    return normalize_label(value)
+
+
+def _is_gray_highlight_row(row: pd.Series) -> bool:
+    search_text = f"{_normalized_index_label(row.name)} {_first_column_label(row)}"
+    return any(marker in search_text for marker in HIGHLIGHT_ROW_MARKERS)
+
+
 def _is_section_header(label: str) -> bool:
     return label in SECTION_HEADER_LABELS or label.startswith("quadro")
 
@@ -133,11 +150,27 @@ def _row_styles(df: pd.DataFrame, label_column: str | None) -> dict[Any, str]:
 
     for index, row in df.iterrows():
         label = _row_label(row, label_column)
+        is_gray_highlight = _is_gray_highlight_row(row)
 
         if not label:
-            styles[index] = _css(CONSOLIDADO_COLORS["white"], CONSOLIDADO_COLORS["near_black"])
+            if is_gray_highlight:
+                styles[index] = _css(
+                    CONSOLIDADO_COLORS["highlight_gray"],
+                    CONSOLIDADO_COLORS["white"],
+                    font_weight="900",
+                )
+            else:
+                styles[index] = _css(CONSOLIDADO_COLORS["white"], CONSOLIDADO_COLORS["near_black"])
             current_pattern = None
             body_row_count = 0
+            continue
+
+        if is_gray_highlight:
+            styles[index] = _css(
+                CONSOLIDADO_COLORS["highlight_gray"],
+                CONSOLIDADO_COLORS["white"],
+                font_weight="900",
+            )
             continue
 
         if _is_section_header(label):
@@ -173,22 +206,13 @@ def _row_styles(df: pd.DataFrame, label_column: str | None) -> dict[Any, str]:
     return styles
 
 
-def _is_negative(value: Any) -> bool:
-    numeric_value = pd.to_numeric(value, errors="coerce")
-    return pd.notna(numeric_value) and numeric_value < 0
-
-
-def style_negative_values(value: Any) -> str:
-    """Pinta valores numericos negativos de vermelho, preservando o fundo da linha."""
-    if _is_negative(value):
-        return f"color: {CONSOLIDADO_COLORS['negative']};"
-    return ""
-
-
-def _apply_negative_styles(styler: pd.io.formats.style.Styler) -> pd.io.formats.style.Styler:
+def _apply_negative_styles(
+    styler: pd.io.formats.style.Styler,
+    subset: list[str] | None = None,
+) -> pd.io.formats.style.Styler:
     if hasattr(styler, "map"):
-        return styler.map(style_negative_values)
-    return styler.applymap(style_negative_values)
+        return styler.map(style_negative_value, subset=subset)
+    return styler.applymap(style_negative_value, subset=subset)
 
 
 def style_consolidado_dataframe(
@@ -212,16 +236,18 @@ def style_consolidado_dataframe(
         )
         return [style] * len(row)
 
-    styler = _apply_negative_styles(df.style.apply(apply_row_style, axis=1))
+    value_columns = [column for column in df.columns if column != resolved_label_column]
+    styler = _apply_negative_styles(df.style.apply(apply_row_style, axis=1), subset=value_columns)
+    formatters = {column: format_negative_value for column in value_columns}
 
     if resolved_label_column:
-        styler = styler.format(
-            {
-                resolved_label_column: lambda value: ""
-                if normalize_label(value) in {"quadro de", "apt", "ita", "itapora"}
-                else value
-            }
+        formatters[resolved_label_column] = (
+            lambda value: ""
+            if normalize_label(value) in {"quadro de", "apt", "ita", "itapora"}
+            else value
         )
+
+    styler = styler.format(formatters)
 
     styler = (
         styler.set_table_styles(

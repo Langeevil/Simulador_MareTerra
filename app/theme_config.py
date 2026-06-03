@@ -37,6 +37,8 @@ COLORS: dict[ColorName, str] = {
     "brown": "#111827",
 }
 
+NEGATIVE_PREFIX = "\U0001F53B "
+
 
 @dataclass(frozen=True)
 class TablePattern:
@@ -116,6 +118,66 @@ def _css(
     if border_bottom:
         declarations.append(f"border-bottom: {border_bottom}")
     return "; ".join(declarations) + ";"
+
+
+def _coerce_display_number(value: Any) -> float | None:
+    if pd.isna(value) or value == "":
+        return None
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        has_negative_prefix = text.startswith(NEGATIVE_PREFIX)
+        text = text.removeprefix(NEGATIVE_PREFIX).strip()
+        text = text.replace(".", "").replace(",", ".")
+        try:
+            numeric_value = float(text)
+        except ValueError:
+            return None
+        return -abs(numeric_value) if has_negative_prefix else numeric_value
+
+    numeric_value = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric_value):
+        return None
+    return float(numeric_value)
+
+
+def _display_number_preserving_sign(value: Any) -> str:
+    if isinstance(value, str):
+        text = value.strip().removeprefix(NEGATIVE_PREFIX).strip()
+        return text
+
+    numeric_value = float(value)
+    if numeric_value.is_integer():
+        return f"{numeric_value:,.0f}".replace(",", ".")
+    return f"{numeric_value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def format_negative_value(value: Any) -> Any:
+    if isinstance(value, str) and value.strip().startswith(NEGATIVE_PREFIX):
+        return value
+
+    numeric_value = _coerce_display_number(value)
+    if numeric_value is not None and numeric_value < 0:
+        return f"{NEGATIVE_PREFIX}{_display_number_preserving_sign(value)}"
+    return value
+
+
+def style_negative_value(value: Any) -> str:
+    numeric_value = _coerce_display_number(value)
+    if numeric_value is not None and numeric_value < 0:
+        return "font-size: 1.10em;"
+    return ""
+
+
+def _apply_negative_value_styles(
+    styler: pd.io.formats.style.Styler,
+    subset: list[str] | None = None,
+) -> pd.io.formats.style.Styler:
+    if hasattr(styler, "map"):
+        return styler.map(style_negative_value, subset=subset)
+    return styler.applymap(style_negative_value, subset=subset)
 
 
 def _section_pattern(label: str) -> PatternName | None:
@@ -228,8 +290,15 @@ def style_dark_regional_report(
         style = row_styles.get(row.name, _css(COLORS["transparent"], COLORS["plot_header_text"]))
         return [style] * len(row)
 
-    return (
-        df.style.apply(apply_row_style, axis=1)
+    value_columns = [column for column in df.columns if column != label_column]
+    formatters = {column: format_negative_value for column in value_columns}
+    styler = _apply_negative_value_styles(
+        df.style.apply(apply_row_style, axis=1).format(formatters),
+        subset=value_columns,
+    )
+
+    styler = (
+        styler
         .set_properties(
             subset=[label_column],
             **{
@@ -238,6 +307,7 @@ def style_dark_regional_report(
                 "white-space": "normal",
                 "word-wrap": "break-word",
                 "font-weight": "700",
+                "text-align": "left",
             },
         )
         .set_table_styles(
@@ -262,9 +332,12 @@ def style_dark_regional_report(
                     "selector": "td",
                     "props": [
                         ("border-color", COLORS["medium_gray"]),
+                        ("text-align", "center"),
                     ],
                 },
             ]
         )
         .hide(axis="index")
     )
+
+    return styler
