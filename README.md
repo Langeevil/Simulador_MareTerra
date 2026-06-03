@@ -78,7 +78,7 @@ A saída usa:
 
 - separador por ponto e vírgula (`;`),
 - codificação `utf-8-sig`,
-- data no formato `YYYY-MM-DD`,
+- data no formato `DD/MM/YYYY`,
 - ponto como separador de milhar e vírgula como separador decimal nas colunas numéricas,
 - uma linha por dia simulado de cada lote.
 

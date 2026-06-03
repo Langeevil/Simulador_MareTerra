@@ -878,7 +878,13 @@ def ultimo_valor_relevante(serie: pd.Series) -> float:
     return float(valores.iloc[-1])
 
 
-def render_line_chart(chart_df: pd.DataFrame, title: str, y_title: str) -> None:
+def render_line_chart(
+    chart_df: pd.DataFrame,
+    title: str,
+    y_title: str,
+    *,
+    selected_month: str | None = None,
+) -> None:
     """Renderiza gráficos com eixos explícitos para evitar leituras ambíguas."""
     if chart_df.empty:
         return
@@ -889,7 +895,7 @@ def render_line_chart(chart_df: pd.DataFrame, title: str, y_title: str) -> None:
         chart_df.reset_index(names="Mês")
         .melt(id_vars="Mês", var_name="Indicador", value_name="Valor")
     )
-    chart = (
+    line_chart = (
         alt.Chart(chart_data)
         .mark_line(point=alt.OverlayMarkDef(filled=True, size=72), strokeWidth=3.2)
         .encode(
@@ -914,8 +920,35 @@ def render_line_chart(chart_df: pd.DataFrame, title: str, y_title: str) -> None:
             ],
         )
         .properties(height=320)
-        .configure_axis(labelFontSize=12, titleFontSize=13)
-        .configure_legend(labelFontSize=12, titleFontSize=12)
+    )
+
+    chart = line_chart
+    if selected_month:
+        selected_data = chart_data[chart_data["Mês"].astype(str) == selected_month]
+        selected_rule = (
+            alt.Chart(pd.DataFrame({"Mês": [selected_month]}))
+            .mark_rule(color=BRAND_GOLD, strokeDash=[6, 4], strokeWidth=2, opacity=0.95)
+            .encode(x=alt.X("Mês:O", sort=None))
+        )
+        selected_points = (
+            alt.Chart(selected_data)
+            .mark_point(filled=False, size=190, strokeWidth=3)
+            .encode(
+                x=alt.X("Mês:O", title="Mês / Tempo", sort=None),
+                y=alt.Y("Valor:Q", title=y_title),
+                color=alt.Color("Indicador:N", scale=alt.Scale(range=CHART_COLORS), legend=None),
+                tooltip=[
+                    alt.Tooltip("Mês:O", title="Mês"),
+                    alt.Tooltip("Indicador:N", title="Série"),
+                    alt.Tooltip("Valor:Q", title=y_title, format=",.2f"),
+                ],
+            )
+        )
+        chart = alt.layer(line_chart, selected_rule, selected_points).properties(height=320)
+
+    chart = chart.configure_axis(labelFontSize=12, titleFontSize=13).configure_legend(
+        labelFontSize=12,
+        titleFontSize=12,
     )
     st.altair_chart(chart, use_container_width=True)
 
@@ -1418,10 +1451,33 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
             ],
         )
         if not chart_consolidado.empty:
-            metric_cols = st.columns(3)
-            for col, label in zip(metric_cols, chart_consolidado.columns[:3]):
-                col.metric(label, format_br_number(ultimo_valor_relevante(chart_consolidado[label]), 0))
-            render_line_chart(chart_consolidado, "Consolidado APT + ITA", "Valor consolidado")
+            meses_consolidado = [str(mes) for mes in chart_consolidado.index]
+            mes_atual = date.today().strftime("%Y-%m")
+            mes_padrao_idx = meses_consolidado.index(mes_atual) if mes_atual in meses_consolidado else len(meses_consolidado) - 1
+
+            # Código anterior: exibia sempre o último valor relevante de cada série.
+            # metric_cols = st.columns(3)
+            # for col, label in zip(metric_cols, chart_consolidado.columns[:3]):
+            #     col.metric(label, format_br_number(ultimo_valor_relevante(chart_consolidado[label]), 0))
+
+            card_col_1, card_col_2, card_col_3, selector_col = st.columns([1, 1, 1, 0.58])
+            with selector_col:
+                mes_selecionado = st.selectbox(
+                    "Mês",
+                    options=meses_consolidado,
+                    index=mes_padrao_idx,
+                    key="consolidado_mes_cards",
+                )
+
+            for col, label in zip([card_col_1, card_col_2, card_col_3], chart_consolidado.columns[:3]):
+                valor_mes = chart_consolidado.loc[mes_selecionado, label]
+                col.metric(label, format_br_number(valor_mes, 0))
+            render_line_chart(
+                chart_consolidado,
+                "Consolidado APT + ITA",
+                "Valor consolidado",
+                selected_month=mes_selecionado,
+            )
         display_consolidado = format_df_for_display(df_consolidado_raw)
         st.dataframe(
             style_consolidado_dataframe(display_consolidado, label_column="Conteúdo / Bloco"),
