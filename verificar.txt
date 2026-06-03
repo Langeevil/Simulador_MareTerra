@@ -1,0 +1,97 @@
+Pra corrigir
+
+Consumo de Ração Acumulado (kg): Deve ser o somatório diário do consumo projetado por tanque, respeitando a fase nutricional ativa (Pré-Inicial, Inicial, Crescimento/Engorda, Terminação) e o número de peixes vivos no dia. (analisar)
+
+TCA Acumulado (Taxa de Conversão Alimentar): Corrigir a fórmula para que reflita a eficiência real acumulada do lote: TCA Acumulada=Consumo de Ração Acumulado (kg)Ganho de Biomassa Acumulado (kg)\text{TCA Acumulada} = \frac{\text{Consumo de Ração Acumulado (kg)}}{\text{Ganho de Biomassa Acumulado (kg)}}TCA Acumulada (analisar)
+
+
+
+Mortalidade Acumulada (peixes): Corrigir a fórmula de decaimento populacional diário. A população ativa do dia
+
+PO Atualizado: Deve ser exatamente igual ao valor de PO (Programação de Ocupação/Alojamento) preenchido manualmente na tabela pelo usuário: PO Atualizado=PO Preenchido na Tabela\text{PO Atualizado} = \text{PO Preenchido na Tabela}PO Atualizado=PO Preenchido na Tabela
+
+PO Atualizado = 
+
+Biometria na Coluna Status: Configurar o gatilho para que a coluna "Status" mude automaticamente em todos os tanques para "Biometria" no mesmo dia que na planilha plantel.cvs está registrado a data da última biometria.
+
+
+•   Regras para "Tanques Disponíveis": Criar a lógica de disponibilidade considerando o tempo de vazio sanitário (limpeza e desinfecção do tanque) antes que ele possa receber um novo povoamento. Na mesma linha em que a coluna de Tanque Liberado é preenchida com 1, acrescentar 5 dias a data dessa linha e preencher na mesma linha a coluna tanque disponível com a seguinte formula: data do tanque liberado + 5 dias.  
+
+Conferência da Planilha de Projeção: Realizar uma auditoria completa nas fórmulas da planilha base para garantir que não existam erros de arrasto ou referências circulares.
+
+
+
+Melhorar a Apresentação Geral do App: Refinar o design visual da interface do usuário (UI), tornando a navegação entre as abas de APT, ITA e a nova aba Consolidada mais fluida e profissional para apresentações executivas. E remover aba lateral que mostra como realizar o uso da aplicação. (corrigido)
+•  Gerar o Executável: Compilar o código do aplicativo em um arquivo executável (.exe ou instalador) para facilitar o uso local. 
+•   Testar o Executável: Realizar testes de instalação e usabilidade em diferentes computadores para garantir que o app rode sem travar e sem perda de performance.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Corrigidos
+Arredondamento Geral: Remover completamente as casas decimais de todas as colunas de contagem de peixes, mortalidade, saldos e valores inteiros de controle para garantir uma visualização limpa e sem frações de peixes. OK
+Abate PO Atualizado Total Mês: Deve calcular a projeção mensal multiplicando o PO diário inserido pelo número exato de dias do mês correspondente na linha da tabela: Abate PO Atualizado Total Meˆs=PO Diaˊrio×Dias do Meˆs\text{Abate PO Atualizado Total Mês} = \text{PO Diário} \times \text{Dias do Mês}Abate PO Atualizado Total Meˆs=PO Diaˊrio×Dias do Meˆs
+ Revisão do Saldo Acumulado Atualizado / Mês: Revisar e corrigir a fórmula de cálculo do saldo acumulado mensal para garantir que a soma dos saldos anteriores e as entradas/saídas do mês corrente fechem com precisão matemática, sem distorções entre os meses projetados.
+Tabela Interativa na Tela do Aplicativo: Implementar uma tabela editável diretamente na interface, que permita ao usuário digitar, alterar e visualizar os valores de Dias de Abate, Metas PO e Transferências manualmente, sem a necessidade de editar o arquivo CSV externo.
+
+Disponibilidade de Edição a Qualquer Momento: Permitir que o usuário acesse e edite a tabela interativa de parâmetros gerenciais livremente em dois momentos distintos: antes de clicar em "Executar Simulação" e também depois da execução, para recalibrar os parâmetros e reexecutar.
+•  Preencher Coluna "Tanques Liberados": Definir a regra automática de liberação. Um tanque deve ser marcado como "Liberado" no dia exato em que ocorre a despesca total (venda) ou transferência completa do lote.
+
+Aba de Informações Conjuntas (APT e ITA): Desenvolver uma tela ou aba consolidada que unifique os dados de biomassa e projeções das duas regiões: Aparecida do Taboado (APT) e Itaporã (ITA).
+
+•  Aba de Informações Conjuntas (APT e ITA): Desenvolver uma tela ou aba consolidada que unifique os dados de biomassa e projeções das duas regiões: Aparecida do Taboado (APT) e Itaporã (ITA). 
+•   Terceira Aba do Relatório (Consolidado APT + ITA): Desenvolver uma aba específica no relatório da tela que realize a junção automática dos dados de Aparecida do Taboado (APT) e Itaporã (ITA), permitindo a visualização unificada da biomassa projetada, consumo de ração e mortalidade acumulada do grupo
+
+Seleção de Meses na Tela: Implementar um controle interativo que permita ao usuário escolher quais meses do ano serão exibidos na tela do computador, filtrando dinamicamente os dados da tabela e dos gráficos conforme a seleção.
+Legenda no Lado Esquerdo do Gráfico: Posicionar a legenda do gráfico no lado esquerdo da área de plotagem, em vez da posição padrão (direita ou inferior), para melhor aproveitamento do espaço e leitura mais intuitiva dos dados.
+
+GDP Acumulado (g) (Ganho de Peso Diário): Ajustar o cálculo para mostrar o ganho médio diário acumulado por peixe desde o início do lote: GDP Acumulado=Peso Meˊdio Atual (g)−Peso Meˊdio Inicial (g)Dias de Cultivo\text{GDP Acumulado} = \frac{\text{Peso Médio Atual (g)} - \text{Peso Médio Inicial (g)}}{\text{Dias de Cultivo}}GDP Acumulado=Dias de CultivoPeso Meˊdio Atual (g)−Peso Médio Inicial (g) (corrigido)
+Arquivo de Parâmetros Gerenciais (parametros_gerenciais.csv): Criar suporte para um quinto arquivo de entrada adicional, anexado junto com os 4 arquivos de operação já existentes. Este arquivo deve conter, no mínimo, as seguintes seções de dados: 
+•	Dias de Abate: datas ou meses programados para despesca de cada lote.
+•	Metas PO: metas de programação de ocupação por tanque ou região.
+•	Transferências: registros de movimentação de peixes entre tanques.
+(corrigido)
+- pegar um botão que quando preencher a tabela interativa vai enviar as informações para o arquivo csv. (parâmetros_gerenciais) (implementado)
+Programas Empilhados: Configurar a exibição para apresentar todos os perfis de curvas empilhados nas mesmas colunas, permitindo a comparação direta e simultânea de diferentes cenários de produção na mesma tela (corrigido)
+•  Diferenciação de Cores por Tipo de Quadro: Aplicar cores distintas para cada categoria de quadro na tabela: 
+•	Próprio: Uma cor específica (ex: azul)
+•	Integração: Outra cor (ex: laranja)
+•	Parceria: Outra cor (ex: verde)
+•   Visibilidade do Nome do Quadro (Coluna A): Ajustar a largura da coluna A ou implementar quebra de texto automática para que o nome completo de cada quadro seja totalmente visível, sem cortes. 
+•   Pintar a Linha "Dias de Abate": Aplicar uma cor de destaque (ex: fundo vermelho claro ou vinho) na linha correspondente aos Dias de Abate para diferenciá-la visualmente das demais linhas da tabela. 
+•   Diferenciar "Previsão Disponibilidade Total" de "Abate PO Atualizado Total Mês": Aplicar formatações visuais distintas (cores de fundo ou bordas diferentes) entre essas duas linhas de totais para que não sejam confundidas durante a leitura rápida. 
+•   Alternância de Cores nas Linhas das Fazendas: Na tabela de resultados por fazenda, alternar a cor de fundo entre as linhas — um cinza claro e o preto (ou branco) — para facilitar a leitura e separação visual de cada fazenda. 
+•   Pintar o Cabeçalho com Cor Diferente: Aplicar uma cor de destaque no cabeçalho da tabela (ex: verde escuro) para diferenciá-lo claramente do corpo dos dados. 
+•   Correção das Informações do Gráfico: Revisar a plotagem dos gráficos de projeção para garantir que as legendas, eixos (X para tempo/meses e Y para biomassa/ração) e curvas plotadas correspondam exatamente aos dados numéricos atualizados da tabela, sem atrasos ou distorções visuais. (corrigido)
+
+Colorização Geral de Linhas e Visualização: Implementar uma identidade visual clara na tabela de dados, colorindo as linhas de forma alternada ou aplicando cores específicas para destacar marcos importantes (como meses de despesca, alertas de biometria ou tanques liberados). (corrigido)
+
+Persistência Bidirecional: Garantir que os valores digitados na tabela interativa possam ser salvos de volta no parametros_gerenciais.csv e que a edição do CSV recarregue automaticamente os valores na tabela da tela. (corrigido)
+
+
+Não rola
+
+
+
+
