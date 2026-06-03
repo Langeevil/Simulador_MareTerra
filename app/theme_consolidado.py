@@ -11,10 +11,10 @@ CONSOLIDADO_COLORS = {
     "white": COLORS["white"],
     "near_black": COLORS["near_black"],
     "medium_gray": COLORS["medium_gray"],
-    # "negative": "#0E1421",
+    "negative": "#0E1421",
     # "negative": "#2A0000",
     # "negative": "#FF0000",
-    "negative": "#C50000",
+    # "negative": "#C50000",
     "transparent": COLORS["transparent"],
 }
 

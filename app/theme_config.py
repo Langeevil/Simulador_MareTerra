@@ -29,7 +29,7 @@ COLORS: dict[ColorName, str] = {
     "light_brown": "#bc933f",
     # "medium_gray": "#a6a6a6",
     # "medium_gray": "#757575",
-    "medium_gray": "#F5F5F5",
+    "medium_gray": "#CFCFCF",
     "dark_gray": "#757171",
     "white": "#FFFFFF",
     "near_black": "#111827",
