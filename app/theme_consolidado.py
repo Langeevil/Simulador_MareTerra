@@ -142,15 +142,43 @@ def _table_pattern(section_index: int):
     return TABLE_PATTERNS[pattern_name]
 
 
+def _last_table_row_indices(df: pd.DataFrame, label_column: str | None) -> set[Any]:
+    last_indices: set[Any] = set()
+    current_last_index: Any | None = None
+
+    for index, row in df.iterrows():
+        label = _row_label(row, label_column)
+
+        if not label:
+            if current_last_index is not None:
+                last_indices.add(current_last_index)
+            current_last_index = None
+            continue
+
+        if _is_section_header(label):
+            if current_last_index is not None:
+                last_indices.add(current_last_index)
+            current_last_index = None
+            continue
+
+        current_last_index = index
+
+    if current_last_index is not None:
+        last_indices.add(current_last_index)
+
+    return last_indices
+
+
 def _row_styles(df: pd.DataFrame, label_column: str | None) -> dict[Any, str]:
     styles: dict[Any, str] = {}
     current_pattern = None
     section_count = 0
     body_row_count = 0
+    last_table_rows = _last_table_row_indices(df, label_column)
 
     for index, row in df.iterrows():
         label = _row_label(row, label_column)
-        is_gray_highlight = _is_gray_highlight_row(row)
+        is_gray_highlight = _is_gray_highlight_row(row) and index not in last_table_rows
 
         if not label:
             if is_gray_highlight:
@@ -165,14 +193,6 @@ def _row_styles(df: pd.DataFrame, label_column: str | None) -> dict[Any, str]:
             body_row_count = 0
             continue
 
-        if is_gray_highlight:
-            styles[index] = _css(
-                CONSOLIDADO_COLORS["highlight_gray"],
-                CONSOLIDADO_COLORS["white"],
-                font_weight="900",
-            )
-            continue
-
         if _is_section_header(label):
             current_pattern = _table_pattern(section_count)
             section_count += 1
@@ -185,11 +205,19 @@ def _row_styles(df: pd.DataFrame, label_column: str | None) -> dict[Any, str]:
             )
             continue
 
+        if is_gray_highlight:
+            styles[index] = _css(
+                CONSOLIDADO_COLORS["highlight_gray"],
+                CONSOLIDADO_COLORS["white"],
+                font_weight="900",
+            )
+            continue
+
         if current_pattern is None:
             styles[index] = _css(CONSOLIDADO_COLORS["transparent"], CONSOLIDADO_COLORS["near_black"])
             continue
 
-        if _is_gold_row(label) or _is_subtotal(label) or _is_final_total(label):
+        if index in last_table_rows or _is_gold_row(label) or _is_subtotal(label) or _is_final_total(label):
             styles[index] = _css(
                 current_pattern.header_footer_background,
                 current_pattern.header_footer_text,
@@ -265,7 +293,7 @@ def style_consolidado_dataframe(
                         ("background-color", COLORS["transparent"]),
                         ("color", COLORS["plot_header_text"]),
                         ("font-weight", "900"),
-                        ("text-align", "center"),
+                        ("text-align", "left"),
                         ("border", f"1px solid {CONSOLIDADO_COLORS['medium_gray']}"),
                     ],
                 },
