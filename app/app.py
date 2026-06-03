@@ -31,7 +31,7 @@ for import_dir in (SRC_DIR, APP_DIR, MATH_DIR):
         sys.path.insert(0, str(import_dir))
 
 from calculos_saldo import calcular_saldo_acumulado_mes
-from theme_config import PatternName, normalize_label, style_dark_regional_report
+from theme_config import PatternName, is_display_numeric_value, normalize_label, style_dark_regional_report
 from theme_consolidado import style_consolidado_dataframe
 
 # Tentativa de importação do motor da simulação
@@ -837,12 +837,19 @@ def auto_width_column_config(
         header = str(column)
         max_chars = max([visible_text_length(header), *df[column].map(visible_text_length).tolist()])
 
-        if normalize_label(header) == "conteudo / bloco":
+        is_label_column = normalize_label(header) == "conteudo / bloco"
+        has_numeric_values = any(is_display_numeric_value(value) for value in df[column].tolist())
+
+        if is_label_column:
             width = max(label_min_width, min(label_max_width, (max_chars * 8) + 36))
         else:
             width = max(min_width, min(max_width, (max_chars * 8) + 36))
 
-        column_config[header] = st.column_config.Column(header, width=int(width))
+        column_config[header] = st.column_config.Column(
+            header,
+            width=int(width),
+            alignment="left" if is_label_column else ("center" if has_numeric_values else "left"),
+        )
 
     return column_config
 

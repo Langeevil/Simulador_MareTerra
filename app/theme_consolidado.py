@@ -4,7 +4,7 @@ from typing import Any
 
 import pandas as pd
 
-from theme_config import COLORS, TABLE_PATTERNS, format_negative_value, normalize_label, style_negative_value
+from theme_config import COLORS, TABLE_PATTERNS, format_negative_value, normalize_label, style_numeric_value
 
 
 CONSOLIDADO_COLORS = {
@@ -206,13 +206,13 @@ def _row_styles(df: pd.DataFrame, label_column: str | None) -> dict[Any, str]:
     return styles
 
 
-def _apply_negative_styles(
+def _apply_numeric_styles(
     styler: pd.io.formats.style.Styler,
     subset: list[str] | None = None,
 ) -> pd.io.formats.style.Styler:
     if hasattr(styler, "map"):
-        return styler.map(style_negative_value, subset=subset)
-    return styler.applymap(style_negative_value, subset=subset)
+        return styler.map(style_numeric_value, subset=subset)
+    return styler.applymap(style_numeric_value, subset=subset)
 
 
 def style_consolidado_dataframe(
@@ -237,7 +237,7 @@ def style_consolidado_dataframe(
         return [style] * len(row)
 
     value_columns = [column for column in df.columns if column != resolved_label_column]
-    styler = _apply_negative_styles(df.style.apply(apply_row_style, axis=1), subset=value_columns)
+    styler = _apply_numeric_styles(df.style.apply(apply_row_style, axis=1), subset=value_columns)
     formatters = {column: format_negative_value for column in value_columns}
 
     if resolved_label_column:
@@ -273,7 +273,6 @@ def style_consolidado_dataframe(
                     "selector": "td",
                     "props": [
                         ("border", f"1px solid {CONSOLIDADO_COLORS['medium_gray']}"),
-                        ("text-align", "center"),
                     ],
                 },
             ]

@@ -143,6 +143,10 @@ def _coerce_display_number(value: Any) -> float | None:
     return float(numeric_value)
 
 
+def is_display_numeric_value(value: Any) -> bool:
+    return _coerce_display_number(value) is not None
+
+
 def _display_number_preserving_sign(value: Any) -> str:
     if isinstance(value, str):
         text = value.strip().removeprefix(NEGATIVE_PREFIX).strip()
@@ -164,20 +168,24 @@ def format_negative_value(value: Any) -> Any:
     return value
 
 
-def style_negative_value(value: Any) -> str:
+def style_numeric_value(value: Any) -> str:
     numeric_value = _coerce_display_number(value)
-    if numeric_value is not None and numeric_value < 0:
-        return "font-size: 1.10em;"
-    return ""
+    if numeric_value is None:
+        return ""
+
+    declarations = ["text-align: center"]
+    if numeric_value < 0:
+        declarations.append("font-size: 1.10em")
+    return "; ".join(declarations) + ";"
 
 
-def _apply_negative_value_styles(
+def _apply_numeric_value_styles(
     styler: pd.io.formats.style.Styler,
     subset: list[str] | None = None,
 ) -> pd.io.formats.style.Styler:
     if hasattr(styler, "map"):
-        return styler.map(style_negative_value, subset=subset)
-    return styler.applymap(style_negative_value, subset=subset)
+        return styler.map(style_numeric_value, subset=subset)
+    return styler.applymap(style_numeric_value, subset=subset)
 
 
 def _section_pattern(label: str) -> PatternName | None:
@@ -292,7 +300,7 @@ def style_dark_regional_report(
 
     value_columns = [column for column in df.columns if column != label_column]
     formatters = {column: format_negative_value for column in value_columns}
-    styler = _apply_negative_value_styles(
+    styler = _apply_numeric_value_styles(
         df.style.apply(apply_row_style, axis=1).format(formatters),
         subset=value_columns,
     )
@@ -332,7 +340,6 @@ def style_dark_regional_report(
                     "selector": "td",
                     "props": [
                         ("border-color", COLORS["medium_gray"]),
-                        ("text-align", "center"),
                     ],
                 },
             ]
