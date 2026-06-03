@@ -4,6 +4,7 @@ import argparse
 import base64
 import csv
 import html
+import importlib
 import io
 import os
 import sys
@@ -31,8 +32,12 @@ for import_dir in (SRC_DIR, APP_DIR, MATH_DIR):
         sys.path.insert(0, str(import_dir))
 
 from calculos_saldo import calcular_saldo_acumulado_mes
+import calculos_movimentacao
 from theme_config import PatternName, is_display_numeric_value, normalize_label, style_dark_regional_report
 from theme_consolidado import style_consolidado_dataframe
+
+calculos_movimentacao = importlib.reload(calculos_movimentacao)
+calcular_saldo_acumulado_consolidado = calculos_movimentacao.calcular_saldo_acumulado_consolidado
 
 # Tentativa de importação do motor da simulação
 try:
@@ -718,18 +723,25 @@ def process_consolidated_data(
         multiply_series(ita["po"], ita["dias"]),
     )
     geral_saldo_mes = diff_series(geral_total_mes, geral_abate_po_mes)
-    geral_dias_abate = apt["dias"]
-    df_geral_saldo_mes = pd.DataFrame({"Mês": months})
-    df_geral_saldo_mes["Grupo"] = "GERAL"
-    df_geral_saldo_mes["Saldo PO Atualizado"] = df_geral_saldo_mes["Mês"].map(geral_saldo_dia)
-    df_geral_saldo_mes["Dias de Abate"] = df_geral_saldo_mes["Mês"].map(geral_dias_abate)
-    df_geral_saldo_mes["Saldo Acm Atualizado / mês"] = calcular_saldo_acumulado_mes(
-        df_geral_saldo_mes,
-        col_saldo_dia="Saldo PO Atualizado",
-        col_dias_abate="Dias de Abate",
-        col_agrupamento="Grupo",
+    
+    # Regra anterior do consolidado: recalculava o acumulado geral usando os dias de abate da APT.
+    # geral_dias_abate = apt["dias"]
+    # df_geral_saldo_mes = pd.DataFrame({"Mês": months})
+    # df_geral_saldo_mes["Grupo"] = "GERAL"
+    # df_geral_saldo_mes["Saldo PO Atualizado"] = df_geral_saldo_mes["Mês"].map(geral_saldo_dia)
+    # df_geral_saldo_mes["Dias de Abate"] = df_geral_saldo_mes["Mês"].map(geral_dias_abate)
+    # df_geral_saldo_mes["Saldo Acm Atualizado / mês"] = calcular_saldo_acumulado_mes(
+    #     df_geral_saldo_mes,
+    #     col_saldo_dia="Saldo PO Atualizado",
+    #     col_dias_abate="Dias de Abate",
+    #     col_agrupamento="Grupo",
+    # )
+    # geral_saldo_acm = df_geral_saldo_mes.set_index("Mês")["Saldo Acm Atualizado / mês"].to_dict()
+    geral_saldo_acm = calcular_saldo_acumulado_consolidado(
+        apt["saldo_acm"],
+        ita["saldo_acm"],
+        months,
     )
-    geral_saldo_acm = df_geral_saldo_mes.set_index("Mês")["Saldo Acm Atualizado / mês"].to_dict()
 
     output_rows.append(title_row("QUADRO DE", "Disponibilidade", "Dia", "GERAL"))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Dia Disponível Abate", **geral_total_dia})

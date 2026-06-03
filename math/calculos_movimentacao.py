@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -161,6 +161,47 @@ def calcular_saldo_acumulado_mes(
     saldo_acumulado = trabalho["_saldo_mes_base"] + saldo_mes_anterior
     saldo_acumulado.name = COLUNA_SALDO_ACUMULADO_MES
     return saldo_acumulado
+
+
+def calcular_saldo_acumulado_consolidado(
+    saldo_acumulado_apt: Mapping[str, float] | pd.Series,
+    saldo_acumulado_ita: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula o consolidado pela soma direta dos saldos acumulados regionais.
+
+    Regra:
+    Saldo Acm Atualizado / Mes Consolidado =
+    Saldo Acm Atualizado / Mes APT + Saldo Acm Atualizado / Mes ITA
+    """
+    # Regra anterior do consolidado, mantida comentada para rastreabilidade:
+    # geral_saldo_dia = total_dia_geral - po_geral
+    # geral_dias_abate = apt["dias"]
+    # geral_saldo_acm = calcular_saldo_acumulado_mes(
+    #     df_geral_saldo_mes,
+    #     col_saldo_dia="Saldo PO Atualizado",
+    #     col_dias_abate="Dias de Abate",
+    #     col_agrupamento="Grupo",
+    # )
+
+    def chaves(valores: Mapping[str, float] | pd.Series) -> list[str]:
+        if isinstance(valores, pd.Series):
+            return list(valores.index)
+        return list(valores.keys())
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(
+        dict.fromkeys([*chaves(saldo_acumulado_apt), *chaves(saldo_acumulado_ita)])
+    )
+    return {
+        mes: valor_mes(saldo_acumulado_apt, mes) + valor_mes(saldo_acumulado_ita, mes)
+        for mes in meses_calculo
+    }
 
 
 def calcular_status_com_biometria(
