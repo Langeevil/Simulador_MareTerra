@@ -38,6 +38,9 @@ from theme_consolidado import style_consolidado_dataframe
 
 calculos_movimentacao = importlib.reload(calculos_movimentacao)
 calcular_saldo_acumulado_consolidado = calculos_movimentacao.calcular_saldo_acumulado_consolidado
+calcular_po_atualizado_no_mes_saldo_consolidado = (
+    calculos_movimentacao.calcular_po_atualizado_no_mes_saldo_consolidado
+)
 
 # Tentativa de importação do motor da simulação
 try:
@@ -718,11 +721,17 @@ def process_consolidated_data(
     geral_po = sum_series(apt["po"], ita["po"])
     geral_saldo_dia = diff_series(geral_total_dia, geral_po)
     geral_total_mes = sum_series(apt["total_mes"], ita["total_mes"])
-    geral_abate_po_mes = sum_series(
-        multiply_series(apt["po"], apt["dias"]),
-        multiply_series(ita["po"], ita["dias"]),
+    # Regra anterior para "PO Atualizado (No mês) Saldo":
+    # geral_abate_po_mes = sum_series(
+    #     multiply_series(apt["po"], apt["dias"]),
+    #     multiply_series(ita["po"], ita["dias"]),
+    # )
+    # geral_saldo_mes = diff_series(geral_total_mes, geral_abate_po_mes)
+    geral_saldo_mes = calcular_po_atualizado_no_mes_saldo_consolidado(
+        geral_saldo_dia,
+        ita["dias"],
+        months,
     )
-    geral_saldo_mes = diff_series(geral_total_mes, geral_abate_po_mes)
     
     # Regra anterior do consolidado: recalculava o acumulado geral usando os dias de abate da APT.
     # geral_dias_abate = apt["dias"]
