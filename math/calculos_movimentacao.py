@@ -366,6 +366,25 @@ def calcular_total_kg_dia_disponivel_abate(
     }
 
 
+def referenciar_saldo_acumulado_regional(
+    saldo_acumulado_regional: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Copia mes a mes a linha de saldo acumulado de uma aba regional.
+    """
+    # Regra anterior, mantida comentada para rastreabilidade:
+    # saldo_po_atual_x_disponivel = saldo_atualizado_dia * dias_abate
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(saldo_acumulado_regional.keys())
+    return {mes: valor_mes(saldo_acumulado_regional, mes) for mes in meses_calculo}
+
+
 def calcular_status_com_biometria(
     df: pd.DataFrame,
     col_status: str,

@@ -49,6 +49,7 @@ referenciar_po_regional = calculos_movimentacao.referenciar_po_regional
 calcular_total_kg_dia_disponivel_abate = (
     calculos_movimentacao.calcular_total_kg_dia_disponivel_abate
 )
+referenciar_saldo_acumulado_regional = calculos_movimentacao.referenciar_saldo_acumulado_regional
 
 # Tentativa de importação do motor da simulação
 try:
@@ -733,7 +734,11 @@ def process_consolidated_data(
         else:
             po_regional = data["po"]
         output_rows.append({"Conteúdo / Bloco": "PO", **po_regional})
-        if region_code == "ITA":
+        if region_code == "APT":
+            # Regra anterior para APT:
+            # saldo_po_atual_disponivel = multiply_series(data["saldo_dia"], data["dias"])
+            saldo_po_atual_disponivel = referenciar_saldo_acumulado_regional(data["saldo_acm"], months)
+        elif region_code == "ITA":
             # Regra anterior para ITA:
             # saldo_po_atual_disponivel = multiply_series(data["saldo_dia"], data["dias"])
             saldo_po_atual_disponivel = referenciar_saldo_atualizado_dia(data["saldo_dia"], months)
