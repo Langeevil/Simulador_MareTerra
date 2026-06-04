@@ -41,6 +41,9 @@ calcular_saldo_acumulado_consolidado = calculos_movimentacao.calcular_saldo_acum
 calcular_po_atualizado_no_mes_saldo_consolidado = (
     calculos_movimentacao.calcular_po_atualizado_no_mes_saldo_consolidado
 )
+calcular_total_kg_mes_disponivel_abate_consolidado = (
+    calculos_movimentacao.calcular_total_kg_mes_disponivel_abate_consolidado
+)
 
 # Tentativa de importação do motor da simulação
 try:
@@ -720,7 +723,15 @@ def process_consolidated_data(
     geral_total_dia = sum_series(apt["total_dia"], ita["total_dia"])
     geral_po = sum_series(apt["po"], ita["po"])
     geral_saldo_dia = diff_series(geral_total_dia, geral_po)
-    geral_total_mes = sum_series(apt["total_mes"], ita["total_mes"])
+    # Regra anterior para "Total Kg/Mês Disponível Abate":
+    # geral_total_mes = sum_series(apt["total_mes"], ita["total_mes"])
+    geral_total_mes = calcular_total_kg_mes_disponivel_abate_consolidado(
+        apt["total_dia"],
+        apt["dias"],
+        ita["total_dia"],
+        ita["dias"],
+        months,
+    )
     # Regra anterior para "PO Atualizado (No mês) Saldo":
     # geral_abate_po_mes = sum_series(
     #     multiply_series(apt["po"], apt["dias"]),

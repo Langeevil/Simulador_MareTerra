@@ -240,6 +240,52 @@ def calcular_po_atualizado_no_mes_saldo_consolidado(
     }
 
 
+def calcular_total_kg_mes_disponivel_abate_consolidado(
+    total_kg_dia_apt: Mapping[str, float] | pd.Series,
+    dias_abate_apt: Mapping[str, float] | pd.Series,
+    total_kg_dia_ita: Mapping[str, float] | pd.Series,
+    dias_abate_ita: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula Total Kg/Mes Disponivel Abate do consolidado conforme a planilha.
+
+    Regra:
+    (Total Kg/Dia Dispon Abate APT * Dias de Abate APT)
+    + (Total Kg/Dia Dispon Abate ITA * Dias de Abate ITA)
+    """
+    # Regra anterior, mantida comentada para rastreabilidade:
+    # geral_total_mes = total_mes_apt + total_mes_ita
+
+    def chaves(valores: Mapping[str, float] | pd.Series) -> list[str]:
+        if isinstance(valores, pd.Series):
+            return list(valores.index)
+        return list(valores.keys())
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(
+        dict.fromkeys(
+            [
+                *chaves(total_kg_dia_apt),
+                *chaves(dias_abate_apt),
+                *chaves(total_kg_dia_ita),
+                *chaves(dias_abate_ita),
+            ]
+        )
+    )
+    return {
+        mes: (
+            valor_mes(total_kg_dia_apt, mes) * valor_mes(dias_abate_apt, mes)
+            + valor_mes(total_kg_dia_ita, mes) * valor_mes(dias_abate_ita, mes)
+        )
+        for mes in meses_calculo
+    }
+
+
 def calcular_status_com_biometria(
     df: pd.DataFrame,
     col_status: str,
