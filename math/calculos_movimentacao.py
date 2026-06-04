@@ -308,6 +308,25 @@ def referenciar_saldo_atualizado_dia(
     return {mes: valor_mes(saldo_atualizado_dia, mes) for mes in meses_calculo}
 
 
+def referenciar_po_regional(
+    po_regional: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Copia mes a mes a linha PO de uma aba regional.
+    """
+    # Regra anterior, mantida comentada para rastreabilidade:
+    # po_consolidado_regional = po_atualizado_regional
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(po_regional.keys())
+    return {mes: valor_mes(po_regional, mes) for mes in meses_calculo}
+
+
 def calcular_status_com_biometria(
     df: pd.DataFrame,
     col_status: str,

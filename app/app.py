@@ -45,6 +45,7 @@ calcular_total_kg_mes_disponivel_abate_consolidado = (
     calculos_movimentacao.calcular_total_kg_mes_disponivel_abate_consolidado
 )
 referenciar_saldo_atualizado_dia = calculos_movimentacao.referenciar_saldo_atualizado_dia
+referenciar_po_regional = calculos_movimentacao.referenciar_po_regional
 
 # Tentativa de importação do motor da simulação
 try:
@@ -576,6 +577,8 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
     saldo_dia = {m: kg_dia_total[m] - po_diario[m] for m in months}
     
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **po_diario})
+    # Regra anterior: as abas regionais nao tinham linha PO separada.
+    output_rows.append({"Conteúdo / Bloco": "PO", **po_diario})
     output_rows.append({"Conteúdo / Bloco": "Saldo Atualizado / dia", **saldo_dia})
 
     df_saldo_mes = pd.DataFrame({"Mês": months})
@@ -677,7 +680,8 @@ def process_consolidated_data(
         "kg_integracao": row_values(df_apt, "Kg/Dia Integração"),
         "kg_parceria": row_values(df_apt, "Kg/Dia Parceria"),
         "total_dia": row_values(df_apt, "Total Kg/Dia Disponível Abate"),
-        "po": row_values(df_apt, "PO Atualizado"),
+        "po_atualizado": row_values(df_apt, "PO Atualizado"),
+        "po": row_values(df_apt, "PO"),
         "saldo_dia": row_values(df_apt, "Saldo Atualizado / dia"),
         "saldo_acm": row_values(df_apt, "Saldo Acm Atualizado / mês"),
         "total_mes": row_values(df_apt, "Previsão Disponibilidade Total"),
@@ -689,7 +693,8 @@ def process_consolidated_data(
         "kg_integracao": row_values(df_ita, "Kg/Dia Integração"),
         "kg_parceria": row_values(df_ita, "Kg/Dia Parceria"),
         "total_dia": row_values(df_ita, "Total Kg/Dia Disponível Abate"),
-        "po": row_values(df_ita, "PO Atualizado"),
+        "po_atualizado": row_values(df_ita, "PO Atualizado"),
+        "po": row_values(df_ita, "PO"),
         "saldo_dia": row_values(df_ita, "Saldo Atualizado / dia"),
         "saldo_acm": row_values(df_ita, "Saldo Acm Atualizado / mês"),
         "total_mes": row_values(df_ita, "Previsão Disponibilidade Total"),
@@ -709,8 +714,14 @@ def process_consolidated_data(
         output_rows.append({"Conteúdo / Bloco": "Kg/Dia Integração", **data["kg_integracao"]})
         output_rows.append({"Conteúdo / Bloco": "Kg/Dia Parceria", **data["kg_parceria"]})
         output_rows.append({"Conteúdo / Bloco": "Total Kg/Dia Dispon Abate", **data["total_dia"]})
-        output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **data["po"]})
-        output_rows.append({"Conteúdo / Bloco": "PO", **data["po"]})
+        output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **data["po_atualizado"]})
+        if region_code == "ITA":
+            # Regra anterior para ITA:
+            # po_regional = data["po_atualizado"]
+            po_regional = referenciar_po_regional(data["po"], months)
+        else:
+            po_regional = data["po"]
+        output_rows.append({"Conteúdo / Bloco": "PO", **po_regional})
         if region_code == "ITA":
             # Regra anterior para ITA:
             # saldo_po_atual_disponivel = multiply_series(data["saldo_dia"], data["dias"])
@@ -728,7 +739,9 @@ def process_consolidated_data(
     regional_block("ITA", ita, availability="Disponibilidade de Biomassa", region_code="ITA")
 
     geral_total_dia = sum_series(apt["total_dia"], ita["total_dia"])
+    geral_po_atualizado = sum_series(apt["po_atualizado"], ita["po_atualizado"])
     geral_po = sum_series(apt["po"], ita["po"])
+    geral_saldo_atualizado_dia = diff_series(geral_total_dia, geral_po_atualizado)
     geral_saldo_dia = diff_series(geral_total_dia, geral_po)
     # Regra anterior para "Total Kg/Mês Disponível Abate":
     # geral_total_mes = sum_series(apt["total_mes"], ita["total_mes"])
@@ -746,7 +759,7 @@ def process_consolidated_data(
     # )
     # geral_saldo_mes = diff_series(geral_total_mes, geral_abate_po_mes)
     geral_saldo_mes = calcular_po_atualizado_no_mes_saldo_consolidado(
-        geral_saldo_dia,
+        geral_saldo_atualizado_dia,
         ita["dias"],
         months,
     )
@@ -772,9 +785,9 @@ def process_consolidated_data(
 
     output_rows.append(title_row("QUADRO DE", "Disponibilidade", "Dia", "GERAL"))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Dia Disponível Abate", **geral_total_dia})
-    output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **geral_po})
+    output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **geral_po_atualizado})
     output_rows.append({"Conteúdo / Bloco": "PO", **geral_po})
-    output_rows.append({"Conteúdo / Bloco": "Saldo PO Atualizado", **geral_saldo_dia})
+    output_rows.append({"Conteúdo / Bloco": "Saldo PO Atualizado", **geral_saldo_atualizado_dia})
     output_rows.append({"Conteúdo / Bloco": "Saldo PO", **geral_saldo_dia})
     output_rows.append(empty_row())
 
