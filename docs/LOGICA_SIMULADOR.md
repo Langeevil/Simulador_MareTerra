@@ -340,6 +340,8 @@ O cálculo usa obrigatoriamente os valores preenchidos na tabela `Parâmetros Ge
 
 ### Saldo Acumulado Atualizado / Mês
 
+Nas abas regionais `APT` e `ITA`, o saldo acumulado mensal é calculado por região:
+
 ```text
 Saldo Acm Atualizado / mês =
     Saldo Acm Atualizado / mês do mês anterior
@@ -347,6 +349,14 @@ Saldo Acm Atualizado / mês =
 ```
 
 No primeiro mês, o saldo acumulado anterior é `0`.
+
+Na aba `Consolidado APT + ITA`, a linha `Saldo Acm Atualizado / mês` não é recalculada usando dias de abate do grupo geral. Ela soma diretamente os saldos acumulados já calculados nas abas regionais:
+
+```text
+Saldo Acm Atualizado / mês Consolidado =
+    Saldo Acm Atualizado / mês APT
+    + Saldo Acm Atualizado / mês ITA
+```
 
 ### Visualização
 
@@ -374,7 +384,7 @@ A aba consolidada segue a estrutura operacional da planilha gerencial:
 - bloco `QUADRO DE DISPONIBILIDADE PARA O ABATE / DIA - GERAL`;
 - bloco `QUADRO DE DISPONIBILIDADE PARA O ABATE / MÊS - GERAL`.
 
-Os blocos regionais reutilizam os cálculos já gerados nas abas APT e ITA. O bloco geral soma as duas regiões.
+Os blocos regionais reutilizam os cálculos já gerados nas abas APT e ITA. O bloco geral soma as duas regiões. Para a linha `Saldo Acm Atualizado / mês`, o consolidado usa a soma direta do saldo acumulado regional de APT com o saldo acumulado regional de ITA.
 
 ## 12. Clusterização de Produtores
 
