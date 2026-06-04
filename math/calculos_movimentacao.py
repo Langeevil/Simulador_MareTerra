@@ -327,6 +327,45 @@ def referenciar_po_regional(
     return {mes: valor_mes(po_regional, mes) for mes in meses_calculo}
 
 
+def calcular_total_kg_dia_disponivel_abate(
+    kg_dia_proprio: Mapping[str, float] | pd.Series,
+    kg_dia_integracao: Mapping[str, float] | pd.Series,
+    kg_dia_parceria: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula Total Kg/Dia Dispon Abate pela soma das linhas de categoria.
+
+    Regra:
+    Total Kg/Dia Dispon Abate =
+    Kg/Dia Proprio + Kg/Dia Integracao + Kg/Dia Parceria
+    """
+    # Regra anterior, mantida comentada para rastreabilidade:
+    # total_kg_dia_disponivel_abate = linha regional ja calculada
+
+    def chaves(valores: Mapping[str, float] | pd.Series) -> list[str]:
+        if isinstance(valores, pd.Series):
+            return list(valores.index)
+        return list(valores.keys())
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(
+        dict.fromkeys([*chaves(kg_dia_proprio), *chaves(kg_dia_integracao), *chaves(kg_dia_parceria)])
+    )
+    return {
+        mes: (
+            valor_mes(kg_dia_proprio, mes)
+            + valor_mes(kg_dia_integracao, mes)
+            + valor_mes(kg_dia_parceria, mes)
+        )
+        for mes in meses_calculo
+    }
+
+
 def calcular_status_com_biometria(
     df: pd.DataFrame,
     col_status: str,

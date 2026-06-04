@@ -46,6 +46,9 @@ calcular_total_kg_mes_disponivel_abate_consolidado = (
 )
 referenciar_saldo_atualizado_dia = calculos_movimentacao.referenciar_saldo_atualizado_dia
 referenciar_po_regional = calculos_movimentacao.referenciar_po_regional
+calcular_total_kg_dia_disponivel_abate = (
+    calculos_movimentacao.calcular_total_kg_dia_disponivel_abate
+)
 
 # Tentativa de importação do motor da simulação
 try:
@@ -700,6 +703,14 @@ def process_consolidated_data(
         "total_mes": row_values(df_ita, "Previsão Disponibilidade Total"),
         "peso_medio": weighted_avg_weight("ITA"),
     }
+    # Regra anterior para APT:
+    # apt["total_dia"] = row_values(df_apt, "Total Kg/Dia Disponível Abate")
+    apt["total_dia"] = calcular_total_kg_dia_disponivel_abate(
+        apt["kg_proprio"],
+        apt["kg_integracao"],
+        apt["kg_parceria"],
+        months,
+    )
 
     def regional_block(
         region_name: str,
