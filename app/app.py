@@ -44,6 +44,7 @@ calcular_po_atualizado_no_mes_saldo_consolidado = (
 calcular_total_kg_mes_disponivel_abate_consolidado = (
     calculos_movimentacao.calcular_total_kg_mes_disponivel_abate_consolidado
 )
+referenciar_saldo_atualizado_dia = calculos_movimentacao.referenciar_saldo_atualizado_dia
 
 # Tentativa de importação do motor da simulação
 try:
@@ -710,9 +711,15 @@ def process_consolidated_data(
         output_rows.append({"Conteúdo / Bloco": "Total Kg/Dia Dispon Abate", **data["total_dia"]})
         output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **data["po"]})
         output_rows.append({"Conteúdo / Bloco": "PO", **data["po"]})
+        if region_code == "ITA":
+            # Regra anterior para ITA:
+            # saldo_po_atual_disponivel = multiply_series(data["saldo_dia"], data["dias"])
+            saldo_po_atual_disponivel = referenciar_saldo_atualizado_dia(data["saldo_dia"], months)
+        else:
+            saldo_po_atual_disponivel = multiply_series(data["saldo_dia"], data["dias"])
         output_rows.append({
             "Conteúdo / Bloco": "Saldo PO Atual. x Disponível",
-            **multiply_series(data["saldo_dia"], data["dias"]),
+            **saldo_po_atual_disponivel,
         })
         output_rows.append({"Conteúdo / Bloco": "Peso Médio", **data["peso_medio"]})
         output_rows.append(empty_row())

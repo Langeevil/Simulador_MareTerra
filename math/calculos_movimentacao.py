@@ -286,6 +286,28 @@ def calcular_total_kg_mes_disponivel_abate_consolidado(
     }
 
 
+def referenciar_saldo_atualizado_dia(
+    saldo_atualizado_dia: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Copia mes a mes o Saldo Atualizado / dia de uma aba regional.
+
+    Regra usada no consolidado para referenciar uma linha ja calculada, como
+    uma celula de outra aba no Excel.
+    """
+    # Regra anterior, mantida comentada para rastreabilidade:
+    # saldo_po_atual_x_disponivel = saldo_atualizado_dia * dias_abate
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(saldo_atualizado_dia.keys())
+    return {mes: valor_mes(saldo_atualizado_dia, mes) for mes in meses_calculo}
+
+
 def calcular_status_com_biometria(
     df: pd.DataFrame,
     col_status: str,
