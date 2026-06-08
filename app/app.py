@@ -595,8 +595,8 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
     saldo_dia = {m: kg_dia_total[m] - po_diario[m] for m in months}
     
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **po_diario})
-    # Regra anterior: as abas regionais nao tinham linha PO separada.
-    output_rows.append({"Conteúdo / Bloco": "PO", **po_diario})
+    # Linha PO mantida comentada para poder ser reativada futuramente nas abas regionais APT/ITA.
+    # output_rows.append({"Conteúdo / Bloco": "PO", **po_diario})
     output_rows.append({"Conteúdo / Bloco": "Saldo Atualizado / dia", **saldo_dia})
 
     df_saldo_mes = pd.DataFrame({"Mês": months})
@@ -665,6 +665,13 @@ def process_consolidated_data(
             values[m] = 0.0 if pd.isna(value) else float(value)
         return values
 
+    def row_values_or_fallback(source: pd.DataFrame, label: str, fallback_label: str) -> dict[str, float]:
+        if source.empty or "Conteúdo / Bloco" not in source.columns:
+            return {m: 0.0 for m in months}
+        if source[source["Conteúdo / Bloco"] == label].empty:
+            return row_values(source, fallback_label)
+        return row_values(source, label)
+
     def sum_series(*series: dict[str, float]) -> dict[str, float]:
         return {m: sum(item.get(m, 0.0) for item in series) for m in months}
 
@@ -699,7 +706,8 @@ def process_consolidated_data(
         "kg_parceria": row_values(df_apt, "Kg/Dia Parceria"),
         "total_dia": row_values(df_apt, "Total Kg/Dia Disponível Abate"),
         "po_atualizado": row_values(df_apt, "PO Atualizado"),
-        "po": row_values(df_apt, "PO"),
+        # A linha PO foi ocultada nas abas regionais; o consolidado preserva o valor interno pelo PO Atualizado.
+        "po": row_values_or_fallback(df_apt, "PO", "PO Atualizado"),
         "saldo_dia": row_values(df_apt, "Saldo Atualizado / dia"),
         "saldo_acm": row_values(df_apt, "Saldo Acm Atualizado / mês"),
         "total_mes": row_values(df_apt, "Previsão Disponibilidade Total"),
@@ -712,7 +720,8 @@ def process_consolidated_data(
         "kg_parceria": row_values(df_ita, "Kg/Dia Parceria"),
         "total_dia": row_values(df_ita, "Total Kg/Dia Disponível Abate"),
         "po_atualizado": row_values(df_ita, "PO Atualizado"),
-        "po": row_values(df_ita, "PO"),
+        # A linha PO foi ocultada nas abas regionais; o consolidado preserva o valor interno pelo PO Atualizado.
+        "po": row_values_or_fallback(df_ita, "PO", "PO Atualizado"),
         "saldo_dia": row_values(df_ita, "Saldo Atualizado / dia"),
         "saldo_acm": row_values(df_ita, "Saldo Acm Atualizado / mês"),
         "total_mes": row_values(df_ita, "Previsão Disponibilidade Total"),

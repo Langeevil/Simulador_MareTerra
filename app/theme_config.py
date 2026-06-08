@@ -217,6 +217,13 @@ def _is_section_footer(label: str) -> bool:
     )
 
 
+def _is_dark_gray_row(label: str) -> bool:
+    return label in {
+        "previsao disponibilidade total",
+        "previsao de disponibilidade total",
+    }
+
+
 def _resolve_label_column(df: pd.DataFrame, label_column: str) -> str:
     if label_column in df.columns:
         return label_column
@@ -273,6 +280,16 @@ def _row_styles(
                 font_weight="900",
                 border_top=f"1px solid {current_pattern.header_footer_background}",
                 border_bottom=f"1px solid {current_pattern.header_footer_background}",
+            )
+            continue
+
+        if _is_dark_gray_row(label):
+            styles[index] = _css(
+                COLORS["dark_gray"],
+                COLORS["white"],
+                font_weight="900",
+                border_top=f"1px solid {COLORS['dark_gray']}",
+                border_bottom=f"1px solid {COLORS['dark_gray']}",
             )
             continue
 

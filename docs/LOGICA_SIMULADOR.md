@@ -161,7 +161,7 @@ O status `Tanque Disponivel` aparece no quinto dia após a liberação do tanque
 | `mort_acumulada_abs` | Soma de peixes mortos desde o início da simulação. |
 | `dc` | Dia equivalente da curva zootécnica. |
 | `fator_regional` | Fator aplicado ao GDP e ao consumo para determinadas regiões. |
-| `cluster` | Perfil tecnológico do produtor, usado para selecionar curvas específicas quando existirem. |
+| Perfil de desempenho | Perfil produtivo usado para selecionar curvas específicas e aplicar fator de desempenho quando existirem. O nome técnico `cluster` ainda é aceito pelo código por compatibilidade. |
 | `data_liberacao` | Data em que o tanque foi liberado por despesca total projetada. |
 
 ## 9. Fórmulas
@@ -506,7 +506,7 @@ Os blocos regionais reutilizam os cálculos já gerados nas abas APT e ITA. O bl
 
 A refatoração está seguindo o padrão de mudança paralela. Por isso, as regras matemáticas estão sendo copiadas para funções puras em `math/`, enquanto `app/app.py` e o motor de simulação ainda fazem a orquestração, montagem das tabelas e chamadas dessas funções durante a validação das fórmulas.
 
-Os módulos de cálculo não devem depender de Streamlit nem de estado global da interface. A regra esperada é receber `DataFrame`, séries, dicionários ou nomes de colunas como parâmetros e devolver uma nova `Series`, `dict` ou uma cópia atualizada do `DataFrame`.
+Os módulos de cálculo não dependem de Streamlit nem de estado global da interface. A regra esperada é receber `DataFrame`, séries, dicionários ou nomes de colunas como parâmetros e devolver uma nova `Series`, `dict` ou uma cópia atualizada do `DataFrame`.
 
 #### `math/calculos_zootecnicos.py`
 
@@ -560,27 +560,29 @@ Centraliza cálculos de movimentação, disponibilidade de tanque e tabelas gere
 - `calcular_saldo_acumulado_dia`: calcula saldo acumulado diário mês a mês somando o saldo do mês atual ao acumulado do mês anterior.
 - `referenciar_saldo_atualizado_dia`, `referenciar_po_regional` e `referenciar_saldo_acumulado_regional`: copiam mês a mês valores já calculados nas abas regionais para os blocos consolidados, simulando referências de célula da planilha.
 
-## 12. Clusterização de Produtores
+## 12. Perfil de Desempenho
 
-O `plantel.csv` pode conter uma coluna opcional de cluster/perfil tecnológico, como:
+O `plantel.csv` pode conter uma coluna opcional de perfil de desempenho, como:
 
-- `Alta Tecnologia`;
-- `Media Tecnologia`;
-- `Baixa Tecnologia`.
+- `Alto Desempenho`;
+- `Desempenho Padrão`;
+- `Baixo Desempenho`.
 
-Se a coluna não existir, o simulador usa `Media Tecnologia` como padrão, sem alterar a curva atual.
+Se a coluna não existir, o simulador usa o perfil padrão, equivalente ao fator `1,00`, sem alterar a curva atual.
 
-O `curvas.csv` também pode conter uma coluna opcional de cluster. Quando existirem curvas específicas para o cluster do lote, o simulador usa essas curvas. Se não existirem, usa a curva padrão da estação.
+O código também aceita nomes técnicos ou antigos como `cluster`, `perfil`, `perfil produtor`, `perfil de produtor`, `perfil tecnologico`, `tecnologia`, `Alta Tecnologia`, `Media Tecnologia` e `Baixa Tecnologia` por compatibilidade com arquivos já existentes.
 
-Quando o arquivo contém mais de um cluster, a interface apresenta uma visualização opcional de programas/curvas empilhadas para comparação. Essa visualização é apenas analítica e não substitui automaticamente os dados da simulação.
+O `curvas.csv` também pode conter uma coluna opcional de perfil de desempenho. Quando existirem curvas específicas para o perfil do lote, o simulador usa essas curvas. Se não existirem, usa a curva padrão da estação.
 
-Além da seleção de curva específica, o código aplica um fator de desempenho somente quando o lote possui cluster informado:
+Quando o arquivo contém mais de um perfil, a interface apresenta uma visualização opcional de programas/curvas empilhadas para comparação. Essa visualização é apenas analítica e não substitui automaticamente os dados da simulação.
 
-| Cluster | Fator |
+Além da seleção de curva específica, o código aplica um fator de desempenho:
+
+| Perfil de Desempenho | Fator |
 | --- | --- |
-| Alta Tecnologia | `1,05` |
-| Media Tecnologia | `1,00` |
-| Baixa Tecnologia | `0,92` |
+| Alto Desempenho | `1,05` |
+| Desempenho Padrão | `1,00` |
+| Baixo Desempenho | `0,92` |
 
 ## 13. Transição de Plantel
 
