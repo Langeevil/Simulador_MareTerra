@@ -811,8 +811,15 @@ def process_consolidated_data(
     #     multiply_series(ita["po"], ita["dias"]),
     # )
     # geral_saldo_mes = diff_series(geral_total_mes, geral_abate_po_mes)
+    # geral_saldo_mes = calcular_po_atualizado_no_mes_saldo_consolidado(
+    #     geral_saldo_atualizado_dia,
+    #     ita["dias"],
+    #     months,
+    # )
     geral_saldo_mes = calcular_po_atualizado_no_mes_saldo_consolidado(
-        geral_saldo_atualizado_dia,
+        apt["po_atualizado"],
+        apt["dias"],
+        ita["po_atualizado"],
         ita["dias"],
         months,
     )

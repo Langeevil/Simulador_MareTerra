@@ -205,7 +205,9 @@ def calcular_saldo_acumulado_consolidado(
 
 
 def calcular_po_atualizado_no_mes_saldo_consolidado(
-    saldo_po_atualizado_geral: Mapping[str, float] | pd.Series,
+    po_atualizado_apt: Mapping[str, float] | pd.Series,
+    dias_abate_apt: Mapping[str, float] | pd.Series,
+    po_atualizado_ita: Mapping[str, float] | pd.Series,
     dias_abate_ita: Mapping[str, float] | pd.Series,
     meses: Sequence[str] | None = None,
 ) -> dict[str, float]:
@@ -214,12 +216,14 @@ def calcular_po_atualizado_no_mes_saldo_consolidado(
 
     Regra:
     PO Atualizado (No Mes) Saldo =
-    Saldo PO Atualizado do quadro geral diario * Dias de Abate da ITA
+    (PO Atualizado APT * Dias de Abate APT)
+    + (PO Atualizado ITA * Dias de Abate ITA)
     """
-    # Regra anterior, mantida comentada para rastreabilidade:
+    # Regras anteriores, mantidas comentadas para rastreabilidade:
     # geral_total_mes = total_mes_apt + total_mes_ita
     # geral_abate_po_mes = (po_apt * dias_apt) + (po_ita * dias_ita)
     # geral_saldo_mes = geral_total_mes - geral_abate_po_mes
+    # geral_saldo_mes = saldo_po_atualizado_geral * dias_abate_ita
 
     def chaves(valores: Mapping[str, float] | pd.Series) -> list[str]:
         if isinstance(valores, pd.Series):
@@ -232,10 +236,20 @@ def calcular_po_atualizado_no_mes_saldo_consolidado(
         return 0.0 if pd.isna(numero) else float(numero)
 
     meses_calculo = list(meses) if meses is not None else list(
-        dict.fromkeys([*chaves(saldo_po_atualizado_geral), *chaves(dias_abate_ita)])
+        dict.fromkeys(
+            [
+                *chaves(po_atualizado_apt),
+                *chaves(dias_abate_apt),
+                *chaves(po_atualizado_ita),
+                *chaves(dias_abate_ita),
+            ]
+        )
     )
     return {
-        mes: valor_mes(saldo_po_atualizado_geral, mes) * valor_mes(dias_abate_ita, mes)
+        mes: (
+            valor_mes(po_atualizado_apt, mes) * valor_mes(dias_abate_apt, mes)
+            + valor_mes(po_atualizado_ita, mes) * valor_mes(dias_abate_ita, mes)
+        )
         for mes in meses_calculo
     }
 
