@@ -714,6 +714,14 @@ def process_consolidated_data(
         "total_mes": row_values(df_ita, "Previsão Disponibilidade Total"),
         "peso_medio": weighted_avg_weight("ITA"),
     }
+    # Regra anterior para ITA:
+    # ita["total_dia"] = row_values(df_ita, "Total Kg/Dia Disponível Abate")
+    ita["total_dia"] = calcular_total_kg_dia_disponivel_abate(
+        ita["kg_proprio"],
+        ita["kg_integracao"],
+        ita["kg_parceria"],
+        months,
+    )
     # Regra anterior para APT:
     # apt["total_dia"] = row_values(df_apt, "Total Kg/Dia Disponível Abate")
     apt["total_dia"] = calcular_total_kg_dia_disponivel_abate(
