@@ -385,6 +385,40 @@ def referenciar_saldo_acumulado_regional(
     return {mes: valor_mes(saldo_acumulado_regional, mes) for mes in meses_calculo}
 
 
+def calcular_saldo_po_atual_disponivel_dia(
+    total_kg_dia_disponivel_abate: Mapping[str, float] | pd.Series,
+    po_atualizado: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula Saldo PO Atual. x Disponivel no quadro diario regional.
+
+    Regra:
+    Total Kg/Dia Dispon Abate - PO Atualizado
+    """
+    # Regras anteriores, mantidas comentadas para rastreabilidade:
+    # saldo_po_atual_x_disponivel = saldo_atualizado_dia * dias_abate
+    # saldo_po_atual_x_disponivel = saldo_acumulado_regional
+
+    def chaves(valores: Mapping[str, float] | pd.Series) -> list[str]:
+        if isinstance(valores, pd.Series):
+            return list(valores.index)
+        return list(valores.keys())
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(
+        dict.fromkeys([*chaves(total_kg_dia_disponivel_abate), *chaves(po_atualizado)])
+    )
+    return {
+        mes: valor_mes(total_kg_dia_disponivel_abate, mes) - valor_mes(po_atualizado, mes)
+        for mes in meses_calculo
+    }
+
+
 def calcular_status_com_biometria(
     df: pd.DataFrame,
     col_status: str,
