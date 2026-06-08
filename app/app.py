@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import re
+import unicodedata
 from collections import defaultdict
 from contextlib import redirect_stdout
 from dataclasses import dataclass
@@ -57,6 +58,7 @@ calcular_saldo_po_atual_disponivel_dia = (
     calculos_movimentacao.calcular_saldo_po_atual_disponivel_dia
 )
 calcular_saldo_acumulado_dia = calculos_movimentacao.calcular_saldo_acumulado_dia
+aplicar_transferencias_biomassa = calculos_movimentacao.aplicar_transferencias_biomassa
 
 # Tentativa de importação do motor da simulação
 try:
@@ -88,8 +90,10 @@ REQUIRED_FILES = {
     "curvas": "curvas.csv",
     "racao": "racao.csv",
     "parametros_gerenciais": "parametros_gerenciais.csv",
+    "terceiros_e_transferencias": "terceiros_e_transferencias.csv",
 }
 PARAMETROS_FILE = "parametros_gerenciais.csv"
+TERCEIROS_TRANSFERENCIAS_FILE = "terceiros_e_transferencias.csv"
 
 
 def runtime_root() -> Path:
@@ -121,6 +125,7 @@ class SimulationConfig:
     curvas: str
     racao: str
     parametros_gerenciais: str
+    terceiros_e_transferencias: str
     output: str
     data_relatorio: date
     mostrar_erros: bool
@@ -365,15 +370,28 @@ def normalizar_coluna_app(valor: object) -> str:
         .replace("ú", "u")
         .replace("ç", "c")
     )
+    texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
     return re.sub(r"[^a-z0-9]+", "_", texto).strip("_")
 
 
 METAS_COLUMNS = ["Mês", "Dias Abate APT", "PO Diário APT (kg)", "Dias Abate ITA", "PO Diário ITA (kg)"]
 TERCEIROS_COLUMNS = ["Região Destino", "Classe", "Produtor", "Mês", "Volume (kg)"]
+TERCEIROS_TRANSFERENCIAS_COLUMNS = [
+    "Mês",
+    "Região Origem",
+    "Região Destino",
+    "Classe",
+    "Produtor",
+    "Volume (kg)",
+]
 
 
 def empty_management_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     return pd.DataFrame(columns=METAS_COLUMNS), pd.DataFrame(columns=TERCEIROS_COLUMNS)
+
+
+def empty_terceiros_transferencias_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=TERCEIROS_TRANSFERENCIAS_COLUMNS)
 
 
 def integer_or_blank(valor: object) -> int | None:
@@ -395,6 +413,111 @@ def csv_numero_or_blank(valor: object) -> object:
     if numero is None:
         return ""
     return str(numero)
+
+
+def csv_mes_or_blank(valor: object) -> str:
+    if pd.isna(valor):
+        return ""
+    texto = str(valor).strip()
+    if re.fullmatch(r"\d{4}-\d{2}", texto):
+        return texto
+    data = pd.to_datetime(texto, format="mixed", dayfirst=True, errors="coerce")
+    if pd.isna(data):
+        return ""
+    return data.strftime("%Y-%m")
+
+
+def limpar_origem_terceiros(df: pd.DataFrame) -> pd.DataFrame:
+    resultado = df.copy()
+    if "Região Origem" not in resultado.columns:
+        resultado["Região Origem"] = "Terceiros"
+    origem = resultado["Região Origem"].fillna("").astype(str).str.strip()
+    resultado["Região Origem"] = origem.mask(origem.eq(""), "Terceiros")
+    return resultado
+
+
+def valores_unicos_ordenados(*series: pd.Series | list[str] | tuple[str, ...] | None) -> list[str]:
+    valores: set[str] = set()
+    for serie in series:
+        if serie is None:
+            continue
+        for valor in list(serie):
+            texto = str(valor).strip()
+            if texto and texto.lower() != "nan":
+                valores.add(texto)
+    return sorted(valores)
+
+
+def opcoes_plantel(csv_bytes: bytes | None) -> tuple[list[str], list[str]]:
+    if not csv_bytes:
+        return [], []
+    try:
+        plantel = pd.read_csv(io.BytesIO(csv_bytes), sep=';', encoding='utf-8-sig', dtype=str).fillna("")
+        if plantel.shape[1] == 1:
+            plantel = pd.read_csv(io.BytesIO(csv_bytes), sep=',', encoding='utf-8-sig', dtype=str).fillna("")
+    except Exception:
+        return [], []
+
+    colunas_normalizadas = {normalizar_coluna_app(coluna): coluna for coluna in plantel.columns}
+    produtor_col = colunas_normalizadas.get("produtor")
+    regiao_col = colunas_normalizadas.get("regiao")
+    produtores = valores_unicos_ordenados(plantel[produtor_col]) if produtor_col else []
+    regioes = valores_unicos_ordenados(plantel[regiao_col]) if regiao_col else []
+    regioes = [
+        "APT" if "APT" in regiao.upper() or "TABOADO" in regiao.upper()
+        else "ITA" if "ITA" in regiao.upper() or "ITAPOR" in regiao.upper()
+        else regiao.upper()
+        for regiao in regioes
+    ]
+    return valores_unicos_ordenados(produtores), valores_unicos_ordenados(regioes)
+
+
+def parse_terceiros_e_transferencias(csv_bytes: bytes | None) -> pd.DataFrame:
+    if not csv_bytes:
+        return empty_terceiros_transferencias_frame()
+
+    raw = pd.read_csv(io.BytesIO(csv_bytes), sep=';', encoding='utf-8-sig', dtype=str).fillna("")
+    if "Mês" not in raw.columns and "Data" in raw.columns:
+        raw = raw.rename(columns={"Data": "Mês"})
+    for coluna in TERCEIROS_TRANSFERENCIAS_COLUMNS:
+        if coluna not in raw.columns:
+            raw[coluna] = ""
+    raw = raw[TERCEIROS_TRANSFERENCIAS_COLUMNS].copy()
+    raw = limpar_origem_terceiros(raw)
+    raw["Mês"] = raw["Mês"].map(csv_mes_or_blank)
+    raw["Volume (kg)"] = raw["Volume (kg)"].map(integer_or_blank)
+    return raw
+
+
+def legacy_terceiros_to_transferencias(df_terceiros: pd.DataFrame) -> pd.DataFrame:
+    if df_terceiros is None or df_terceiros.empty:
+        return empty_terceiros_transferencias_frame()
+
+    resultado = pd.DataFrame({
+        "Mês": df_terceiros.get("Mês", pd.Series(dtype=str)).astype(str).str.strip(),
+        "Região Origem": "Terceiros",
+        "Região Destino": df_terceiros.get("Região Destino", ""),
+        "Classe": df_terceiros.get("Classe", ""),
+        "Produtor": df_terceiros.get("Produtor", ""),
+        "Volume (kg)": df_terceiros.get("Volume (kg)", ""),
+    })
+    resultado["Volume (kg)"] = resultado["Volume (kg)"].map(integer_or_blank)
+    return resultado[TERCEIROS_TRANSFERENCIAS_COLUMNS]
+
+
+def terceiros_e_transferencias_to_csv(df_transferencias: pd.DataFrame) -> bytes:
+    if df_transferencias is None:
+        df_transferencias = empty_terceiros_transferencias_frame()
+    output = df_transferencias.copy()
+    for coluna in TERCEIROS_TRANSFERENCIAS_COLUMNS:
+        if coluna not in output.columns:
+            output[coluna] = ""
+    output = limpar_origem_terceiros(output[TERCEIROS_TRANSFERENCIAS_COLUMNS])
+    output["Mês"] = output["Mês"].map(csv_mes_or_blank)
+    output["Volume (kg)"] = output["Volume (kg)"].map(csv_numero_or_blank)
+    buffer = io.StringIO()
+    output.to_csv(buffer, sep=';', index=False)
+    return buffer.getvalue().encode("utf-8-sig")
 
 
 def parse_parametros_gerenciais(csv_bytes: bytes, data_inicio: date, num_meses: int = 12) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -493,17 +616,31 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
 
     months = df_metas['Mês'].tolist()
 
-    # 1. Filtro Estratégico: Região e Status de Abate
-    df_reg = df[(df['regiao_calc'] == region) & ((df['status'] == 'peixe pronto') | (df['peso_medio_g'] >= 900))]
+    # 1. Filtro Estratégico: Status de Abate
+    df_ready = df[(df['status'] == 'peixe pronto') | (df['peso_medio_g'] >= 900)]
     
     # 2. Remoção de Duplicatas (Manter apenas o último registro do lote no mês)
-    df_reg = df_reg.sort_values('data').drop_duplicates(subset=['produtor', 'tanque', 'mes'], keep='last')
+    df_ready = df_ready.sort_values('data').drop_duplicates(
+        subset=['regiao_calc', 'produtor', 'tanque', 'mes'],
+        keep='last',
+    )
 
     # 3. Agregação Vetorizada de Biomassa
-    if not df_reg.empty:
-        df_grouped = df_reg.groupby(['classe_calc', 'produtor', 'mes'])['biomassa_kg'].sum().reset_index()
+    if not df_ready.empty:
+        df_grouped = df_ready.groupby(
+            ['regiao_calc', 'classe_calc', 'produtor', 'mes'],
+            as_index=False,
+        )['biomassa_kg'].sum()
     else:
-        df_grouped = pd.DataFrame(columns=['classe_calc', 'produtor', 'mes', 'biomassa_kg'])
+        df_grouped = pd.DataFrame(columns=['regiao_calc', 'classe_calc', 'produtor', 'mes', 'biomassa_kg'])
+
+    df_transferencias_calc = (
+        legacy_terceiros_to_transferencias(df_terceiros)
+        if df_terceiros is not None and not df_terceiros.empty and "Região Origem" not in df_terceiros.columns
+        else df_terceiros
+    )
+    df_grouped = aplicar_transferencias_biomassa(df_grouped, df_transferencias_calc)
+    df_grouped = df_grouped[df_grouped['regiao_calc'] == region]
 
     # 4. Estrutura de Memória Otimizada (Dicionário de Matrizes)
     block_data = defaultdict(lambda: defaultdict(float))
@@ -515,16 +652,6 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
         if m in months:
             block_data[(c, p)][m] += v
             producers_by_classe[c].add(p)
-
-    # Alimentar lançamentos manuais (Terceiros/Transferências)
-    if not df_terceiros.empty:
-        t_reg = df_terceiros[df_terceiros['Região Destino'] == region]
-        for _, row in t_reg.iterrows():
-            c, p, m = row['Classe'], row['Produtor'], row['Mês']
-            v = pd.to_numeric(row.get('Volume (kg)', 0), errors="coerce")
-            if m in months and pd.notna(v):
-                block_data[(c, p)][m] += float(v)
-                producers_by_classe[c].add(p)
 
     # ==========================================
     # MONTAGEM DO LAYOUT CORPORATIVO EXCEL
@@ -1298,8 +1425,11 @@ def render_management_inputs(
     data_inicio: date,
     num_meses: int = 12,
     parametros_bytes: bytes | None = None,
+    transferencias_bytes: bytes | None = None,
+    plantel_bytes: bytes | None = None,
     key_prefix: str = "management",
     save_path: Path | None = None,
+    transferencias_save_path: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
     st.divider()
     title_col, action_col = st.columns([0.74, 0.26])
@@ -1310,10 +1440,27 @@ def render_management_inputs(
         save_action_slot = st.empty()
     saved_toast_key = f"{key_prefix}_parametros_saved_toast"
     if st.session_state.pop(saved_toast_key, False):
-        st.toast("parametros_gerenciais.csv salvo com sucesso.", icon="✅")
+        st.toast("Arquivos de entrada salvos com sucesso.", icon="✅")
     
-    df_metas_base, df_terceiros_base = parse_parametros_gerenciais(parametros_bytes or b"", data_inicio, num_meses)
+    df_metas_base, df_terceiros_legacy = parse_parametros_gerenciais(parametros_bytes or b"", data_inicio, num_meses)
+    df_transferencias_base = (
+        parse_terceiros_e_transferencias(transferencias_bytes)
+        if transferencias_bytes is not None
+        else legacy_terceiros_to_transferencias(df_terceiros_legacy)
+    )
     meses = df_metas_base["Mês"].tolist()
+    produtores_plantel, regioes_plantel = opcoes_plantel(plantel_bytes)
+    regioes_transferencias = valores_unicos_ordenados(
+        df_transferencias_base.get("Região Origem"),
+        df_transferencias_base.get("Região Destino"),
+    )
+    regioes_editor = valores_unicos_ordenados(["Terceiros", "APT", "ITA"], regioes_plantel, regioes_transferencias)
+    produtores_editor = valores_unicos_ordenados(produtores_plantel, df_transferencias_base.get("Produtor"))
+    produtor_column_config = (
+        st.column_config.SelectboxColumn("Produtor", options=produtores_editor, required=True)
+        if produtores_editor
+        else st.column_config.TextColumn("Produtor", required=True)
+    )
         
     col1, col2 = st.columns([1.1, 0.9])
     
@@ -1334,20 +1481,21 @@ def render_management_inputs(
         )
 
     with col2:
-        st.markdown("#### 2. Volumes de Terceiros e Transferências")
-        df_terceiros_editado = st.data_editor(
-            df_terceiros_base,
+        st.markdown("#### Volume de Terceiros e Transferencias")
+        df_transferencias_editado = st.data_editor(
+            df_transferencias_base,
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
             column_config={
+                "Mês": st.column_config.SelectboxColumn("Mês", options=meses, required=True),
+                "Região Origem": st.column_config.SelectboxColumn("Região Origem", options=regioes_editor, required=True),
                 "Região Destino": st.column_config.SelectboxColumn("Região Destino", options=["APT", "ITA"], required=True),
                 "Classe": st.column_config.SelectboxColumn("Classe", options=["Próprio", "Integração", "Parceria"], required=True),
-                "Mês": st.column_config.SelectboxColumn("Mês", options=meses, required=True),
                 "Volume (kg)": st.column_config.NumberColumn("Volume (kg)", required=True, step=1000, format="%d"),
-                "Produtor": st.column_config.TextColumn("Produtor", required=True)
+                "Produtor": produtor_column_config,
             },
-            key=f"{key_prefix}_terceiros_editor_{data_inicio.isoformat()}_{hash(parametros_bytes)}"
+            key=f"{key_prefix}_terceiros_transferencias_editor_{data_inicio.isoformat()}_{hash(transferencias_bytes)}"
         )
 
     meses_visiveis = st.multiselect(
@@ -1360,7 +1508,12 @@ def render_management_inputs(
     if not meses_visiveis:
         meses_visiveis = meses
 
-    parametros_csv = parametros_gerenciais_to_csv(df_metas_editado, df_terceiros_editado)
+    df_transferencias_editado = limpar_origem_terceiros(df_transferencias_editado)
+    st.session_state["df_metas"] = df_metas_editado.copy()
+    st.session_state["df_terceiros"] = df_transferencias_editado.copy()
+    st.session_state["meses_visiveis"] = list(meses_visiveis)
+    parametros_csv = parametros_gerenciais_to_csv(df_metas_editado, pd.DataFrame(columns=TERCEIROS_COLUMNS))
+    transferencias_csv = terceiros_e_transferencias_to_csv(df_transferencias_editado)
     st.download_button(
         "📥 Baixar parâmetros gerenciais atualizados",
         data=parametros_csv,
@@ -1368,6 +1521,14 @@ def render_management_inputs(
         mime="text/csv",
         use_container_width=True,
         key=f"{key_prefix}_download_parametros_gerenciais",
+    )
+    st.download_button(
+        "📥 Baixar terceiros e transferências atualizados",
+        data=transferencias_csv,
+        file_name=TERCEIROS_TRANSFERENCIAS_FILE,
+        mime="text/csv",
+        use_container_width=True,
+        key=f"{key_prefix}_download_terceiros_transferencias",
     )
     if save_path is not None:
         with save_action_slot.container():
@@ -1384,7 +1545,7 @@ def render_management_inputs(
                     color: rgba(49, 51, 63, 0.6);
                     line-height: 1.35;
                 ">
-                    Sobrescreve os dados no arquivo de parâmetros gerenciais com os dados alterados na tabela.
+                    Sobrescreve os arquivos de entrada com os dados alterados nas tabelas.
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -1392,24 +1553,33 @@ def render_management_inputs(
         if salvar_parametros:
             save_path.parent.mkdir(parents=True, exist_ok=True)
             save_path.write_bytes(parametros_csv)
+            if transferencias_save_path is not None:
+                transferencias_save_path.parent.mkdir(parents=True, exist_ok=True)
+                transferencias_save_path.write_bytes(transferencias_csv)
             st.session_state["df_metas"] = df_metas_editado.copy()
-            st.session_state["df_terceiros"] = df_terceiros_editado.copy()
+            st.session_state["df_terceiros"] = df_transferencias_editado.copy()
             st.session_state["meses_visiveis"] = list(meses_visiveis)
             st.session_state[f"{key_prefix}_parametros_file_mtime_ns"] = save_path.stat().st_mtime_ns
             st.session_state[f"{key_prefix}_parametros_override_bytes"] = parametros_csv
+            if transferencias_save_path is not None:
+                st.session_state[f"{key_prefix}_transferencias_file_mtime_ns"] = transferencias_save_path.stat().st_mtime_ns
+            st.session_state[f"{key_prefix}_transferencias_override_bytes"] = transferencias_csv
             st.session_state[saved_toast_key] = True
             st.rerun()
 
-    return df_metas_editado, df_terceiros_editado, meses_visiveis
+    return df_metas_editado, df_transferencias_editado, meses_visiveis
 
 
 def render_validated_management_inputs(
     data_inicio: date,
     parametros_bytes: bytes | None,
+    transferencias_bytes: bytes | None,
+    plantel_bytes: bytes | None,
     key_prefix: str,
     save_path: Path | None = None,
+    transferencias_save_path: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str]] | None:
-    if parametros_bytes is None:
+    if parametros_bytes is None or transferencias_bytes is None:
         return None
 
     try:
@@ -1417,8 +1587,11 @@ def render_validated_management_inputs(
             data_inicio,
             num_meses=12,
             parametros_bytes=parametros_bytes,
+            transferencias_bytes=transferencias_bytes,
+            plantel_bytes=plantel_bytes,
             key_prefix=key_prefix,
             save_path=save_path,
+            transferencias_save_path=transferencias_save_path,
         )
     except ValueError as exc:
         st.error(f"parametros_gerenciais.csv invalido: {exc}")
@@ -1434,6 +1607,26 @@ def watch_parametros_gerenciais_file(path: Path, key_prefix: str) -> None:
 
     state_key = f"{key_prefix}_parametros_file_mtime_ns"
     toast_key = f"{key_prefix}_parametros_external_update_toast"
+    current_mtime = path.stat().st_mtime_ns
+    previous_mtime = st.session_state.get(state_key)
+
+    if previous_mtime is None:
+        st.session_state[state_key] = current_mtime
+        return
+
+    if current_mtime != previous_mtime:
+        st.session_state[state_key] = current_mtime
+        st.session_state[toast_key] = True
+        st.rerun()
+
+
+@st.fragment(run_every="2s")
+def watch_terceiros_transferencias_file(path: Path, key_prefix: str) -> None:
+    if not path.exists():
+        return
+
+    state_key = f"{key_prefix}_transferencias_file_mtime_ns"
+    toast_key = f"{key_prefix}_transferencias_external_update_toast"
     current_mtime = path.stat().st_mtime_ns
     previous_mtime = st.session_state.get(state_key)
 
@@ -1548,6 +1741,8 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
     if meses_visiveis:
         df_metas = df_metas[df_metas["Mês"].isin(meses_visiveis)].copy()
         if df_terceiros is not None and not df_terceiros.empty:
+            if "Mês" not in df_terceiros.columns and "Data" in df_terceiros.columns:
+                df_terceiros = df_terceiros.rename(columns={"Data": "Mês"})
             df_terceiros = df_terceiros[df_terceiros["Mês"].isin(meses_visiveis)].copy()
         
     with st.spinner("Processando base de dados com Pandas..."):
@@ -1673,6 +1868,7 @@ def run_simulation(config: SimulationConfig) -> tuple[Path, str]:
         input_dir=str(config.input_dir), plantel=config.plantel,
         tanques=config.tanques, curvas=config.curvas, racao=config.racao,
         parametros_gerenciais=config.parametros_gerenciais,
+        terceiros_e_transferencias=config.terceiros_e_transferencias,
         output=str(output_path), mostrar_erros=config.mostrar_erros,
         data_relatorio=config.data_relatorio.strftime("%d/%m/%Y"),
     )
@@ -1703,11 +1899,27 @@ def main() -> None:
             "parametros_gerenciais.csv",
             type=["csv"],
             key="u_parametros_gerenciais",
-            help="Obrigatorio. Contem dias de abate, metas PO e transferencias.",
+            help="Obrigatorio. Contem dias de abate e metas PO.",
+        )
+        uploaded_files["terceiros_e_transferencias"] = st.file_uploader(
+            "terceiros_e_transferencias.csv",
+            type=["csv"],
+            key="u_terceiros_e_transferencias",
+            help="Obrigatorio. Contem volumes de terceiros e transferencias entre regioes.",
         )
         parametros_bytes = (
             uploaded_files["parametros_gerenciais"].getvalue()
             if uploaded_files.get("parametros_gerenciais") is not None
+            else None
+        )
+        transferencias_bytes = (
+            uploaded_files["terceiros_e_transferencias"].getvalue()
+            if uploaded_files.get("terceiros_e_transferencias") is not None
+            else None
+        )
+        plantel_bytes = (
+            uploaded_files["plantel"].getvalue()
+            if uploaded_files.get("plantel") is not None
             else None
         )
         if parametros_bytes is not None:
@@ -1716,11 +1928,20 @@ def main() -> None:
                 st.session_state["upload_parametros_source_hash"] = uploaded_hash
                 st.session_state.pop("upload_parametros_override_bytes", None)
             parametros_bytes = st.session_state.get("upload_parametros_override_bytes", parametros_bytes)
+        if transferencias_bytes is not None:
+            uploaded_hash = hash(transferencias_bytes)
+            if st.session_state.get("upload_transferencias_source_hash") != uploaded_hash:
+                st.session_state["upload_transferencias_source_hash"] = uploaded_hash
+                st.session_state.pop("upload_transferencias_override_bytes", None)
+            transferencias_bytes = st.session_state.get("upload_transferencias_override_bytes", transferencias_bytes)
         management_state = render_validated_management_inputs(
             data_relatorio,
             parametros_bytes,
+            transferencias_bytes,
+            plantel_bytes,
             key_prefix="upload",
             save_path=RUNTIME_DIR / "data" / "input" / PARAMETROS_FILE,
+            transferencias_save_path=RUNTIME_DIR / "data" / "input" / TERCEIROS_TRANSFERENCIAS_FILE,
         )
 
         if uploaded_files.get("curvas") is not None:
@@ -1733,7 +1954,7 @@ def main() -> None:
             
         missing = [f for k, f in REQUIRED_FILES.items() if uploaded_files.get(k) is None]
         if missing or management_state is None:
-            if management_state is None and PARAMETROS_FILE not in missing:
+            if management_state is None and not missing:
                 missing.append(PARAMETROS_FILE)
             st.warning("Envie todos os arquivos obrigatórios: " + ", ".join(missing))
             st.button("🚀 Executar Simulação", disabled=True, key="btn_up_disabled")
@@ -1746,7 +1967,11 @@ def main() -> None:
                         for key, file_name in REQUIRED_FILES.items():
                             if key == "parametros_gerenciais":
                                 (work_dir / file_name).write_bytes(
-                                    parametros_gerenciais_to_csv(df_metas, df_terceiros)
+                                    parametros_gerenciais_to_csv(df_metas, pd.DataFrame(columns=TERCEIROS_COLUMNS))
+                                )
+                            elif key == "terceiros_e_transferencias":
+                                (work_dir / file_name).write_bytes(
+                                    terceiros_e_transferencias_to_csv(df_terceiros)
                                 )
                             else:
                                 (work_dir / file_name).write_bytes(uploaded_files[key].getbuffer())
@@ -1756,6 +1981,7 @@ def main() -> None:
                             tanques=REQUIRED_FILES["tanques"], curvas=REQUIRED_FILES["curvas"],
                             racao=REQUIRED_FILES["racao"],
                             parametros_gerenciais=REQUIRED_FILES["parametros_gerenciais"],
+                            terceiros_e_transferencias=REQUIRED_FILES["terceiros_e_transferencias"],
                             output=output_name,
                             data_relatorio=data_relatorio, mostrar_erros=mostrar_erros,
                         )
@@ -1778,19 +2004,31 @@ def main() -> None:
             file_name for file_name in REQUIRED_FILES.values() if not (input_dir / file_name).exists()
         ]
         parametros_local = input_dir / REQUIRED_FILES["parametros_gerenciais"]
+        transferencias_local = input_dir / REQUIRED_FILES["terceiros_e_transferencias"]
         management_state = None
-        if parametros_local.exists():
+        if parametros_local.exists() and transferencias_local.exists():
             watch_parametros_gerenciais_file(parametros_local, key_prefix="local")
+            watch_terceiros_transferencias_file(transferencias_local, key_prefix="local")
             if st.session_state.pop("local_parametros_external_update_toast", False):
                 st.toast("parametros_gerenciais.csv atualizado fora do app. Tela recarregada.", icon="🔄")
+            if st.session_state.pop("local_transferencias_external_update_toast", False):
+                st.toast("terceiros_e_transferencias.csv atualizado fora do app. Tela recarregada.", icon="🔄")
             management_state = render_validated_management_inputs(
                 data_relatorio,
                 parametros_local.read_bytes(),
+                transferencias_local.read_bytes(),
+                (input_dir / REQUIRED_FILES["plantel"]).read_bytes() if (input_dir / REQUIRED_FILES["plantel"]).exists() else None,
                 key_prefix="local",
                 save_path=parametros_local,
+                transferencias_save_path=transferencias_local,
             )
         else:
-            st.error(f"Arquivo obrigatorio nao encontrado: {PARAMETROS_FILE}")
+            arquivos_ausentes = [
+                file_name
+                for file_name in [PARAMETROS_FILE, TERCEIROS_TRANSFERENCIAS_FILE]
+                if not (input_dir / file_name).exists()
+            ]
+            st.error("Arquivo obrigatorio nao encontrado: " + ", ".join(arquivos_ausentes))
         curvas_local = input_dir / REQUIRED_FILES["curvas"]
         if curvas_local.exists():
             try:
@@ -1809,13 +2047,17 @@ def main() -> None:
                 tanques=REQUIRED_FILES["tanques"], curvas=REQUIRED_FILES["curvas"],
                 racao=REQUIRED_FILES["racao"],
                 parametros_gerenciais=REQUIRED_FILES["parametros_gerenciais"],
+                terceiros_e_transferencias=REQUIRED_FILES["terceiros_e_transferencias"],
                 output=output_name,
                 data_relatorio=data_relatorio, mostrar_erros=mostrar_erros,
             )
             try:
                 input_dir.mkdir(parents=True, exist_ok=True)
                 (input_dir / PARAMETROS_FILE).write_bytes(
-                    parametros_gerenciais_to_csv(df_metas, df_terceiros)
+                    parametros_gerenciais_to_csv(df_metas, pd.DataFrame(columns=TERCEIROS_COLUMNS))
+                )
+                (input_dir / TERCEIROS_TRANSFERENCIAS_FILE).write_bytes(
+                    terceiros_e_transferencias_to_csv(df_terceiros)
                 )
                 with st.spinner("Motor de Cálculo em Execução..."):
                     out_path, stdout = run_simulation(config)

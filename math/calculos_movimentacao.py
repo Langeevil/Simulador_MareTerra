@@ -12,6 +12,7 @@ STATUS_TANQUE_DISPONIVEL = "Tanque Disponivel"
 COLUNA_DATA_TANQUE_DISPONIVEL = "Data Tanque Disponivel"
 COLUNA_TANQUES_DISPONIVEL = "Tanques Disponivel"
 COLUNA_SALDO_ACUMULADO_MES = "Saldo Acumulado Atualizado do Mes"
+ORIGEM_TERCEIROS = "Terceiros"
 
 
 def _colunas_grupo(col_agrupamento: str | Sequence[str] | None) -> list[str]:
@@ -26,6 +27,162 @@ def _validar_colunas(df: pd.DataFrame, colunas: Sequence[str]) -> None:
     ausentes = pd.Index(colunas).difference(df.columns)
     if not ausentes.empty:
         raise KeyError(f"Colunas ausentes: {', '.join(ausentes)}")
+
+
+def _normalizar_texto_chave(serie: pd.Series) -> pd.Series:
+    return serie.fillna("").astype(str).str.strip()
+
+
+def aplicar_transferencias_biomassa(
+    df_resultados: pd.DataFrame,
+    df_transferencias: pd.DataFrame,
+    *,
+    col_data_transferencia: str = "Data",
+    col_mes_transferencia: str = "Mês",
+    col_regiao_origem: str = "Região Origem",
+    col_regiao_destino: str = "Região Destino",
+    col_classe_transferencia: str = "Classe",
+    col_produtor_transferencia: str = "Produtor",
+    col_volume: str = "Volume (kg)",
+    col_mes_resultado: str = "mes",
+    col_regiao_resultado: str = "regiao_calc",
+    col_classe_resultado: str = "classe_calc",
+    col_produtor_resultado: str = "produtor",
+    col_valor: str = "biomassa_kg",
+) -> pd.DataFrame:
+    """
+    Aplica debitos e creditos de transferencias sobre uma tabela mensal agregada.
+
+    A chave de aplicacao e mes/regiao/classe/produtor. Linhas com origem vazia
+    sao tratadas como "Terceiros" e geram apenas credito no destino.
+    """
+    colunas_resultado = [
+        col_mes_resultado,
+        col_regiao_resultado,
+        col_classe_resultado,
+        col_produtor_resultado,
+        col_valor,
+    ]
+    _validar_colunas(df_resultados, colunas_resultado)
+
+    if df_transferencias is None or df_transferencias.empty:
+        return df_resultados.copy()
+
+    colunas_transferencia = [
+        col_regiao_origem,
+        col_regiao_destino,
+        col_classe_transferencia,
+        col_produtor_transferencia,
+        col_volume,
+    ]
+    _validar_colunas(df_transferencias, colunas_transferencia)
+
+    transferencias = df_transferencias.copy()
+    if col_data_transferencia in transferencias.columns:
+        datas = pd.to_datetime(
+            transferencias[col_data_transferencia],
+            format="mixed",
+            dayfirst=True,
+            errors="coerce",
+        )
+        transferencias["_mes_transferencia"] = datas.dt.strftime("%Y-%m")
+    elif col_mes_transferencia in transferencias.columns:
+        transferencias["_mes_transferencia"] = _normalizar_texto_chave(transferencias[col_mes_transferencia])
+    else:
+        raise KeyError(f"Colunas ausentes: {col_data_transferencia} ou {col_mes_transferencia}")
+
+    origem = _normalizar_texto_chave(transferencias[col_regiao_origem])
+    transferencias[col_regiao_origem] = origem.mask(origem.eq(""), ORIGEM_TERCEIROS)
+    transferencias["_volume_transferencia"] = pd.to_numeric(
+        transferencias[col_volume],
+        errors="coerce",
+    ).fillna(0.0)
+    transferencias = transferencias[
+        transferencias["_mes_transferencia"].notna()
+        & transferencias["_mes_transferencia"].ne("")
+        & transferencias["_volume_transferencia"].ne(0)
+    ].copy()
+
+    if transferencias.empty:
+        return df_resultados.copy()
+
+    base = df_resultados.copy()
+    base[col_valor] = pd.to_numeric(base[col_valor], errors="coerce").fillna(0.0)
+
+    chaves_resultado = [
+        col_mes_resultado,
+        col_regiao_resultado,
+        col_classe_resultado,
+        col_produtor_resultado,
+    ]
+    base_agregada = (
+        base.assign(
+            **{
+                col_mes_resultado: _normalizar_texto_chave(base[col_mes_resultado]),
+                col_regiao_resultado: _normalizar_texto_chave(base[col_regiao_resultado]),
+                col_classe_resultado: _normalizar_texto_chave(base[col_classe_resultado]),
+                col_produtor_resultado: _normalizar_texto_chave(base[col_produtor_resultado]),
+            }
+        )
+        .groupby(chaves_resultado, dropna=False, sort=False, as_index=False)[col_valor]
+        .sum()
+    )
+
+    creditos = transferencias.assign(
+        **{
+            col_mes_resultado: _normalizar_texto_chave(transferencias["_mes_transferencia"]),
+            col_regiao_resultado: _normalizar_texto_chave(transferencias[col_regiao_destino]).str.upper(),
+            col_classe_resultado: _normalizar_texto_chave(transferencias[col_classe_transferencia]),
+            col_produtor_resultado: _normalizar_texto_chave(transferencias[col_produtor_transferencia]),
+            "_ajuste_transferencia": transferencias["_volume_transferencia"],
+        }
+    )[chaves_resultado + ["_ajuste_transferencia"]]
+
+    debitos_base = transferencias[
+        _normalizar_texto_chave(transferencias[col_regiao_origem]).str.casefold()
+        != ORIGEM_TERCEIROS.casefold()
+    ].assign(
+        **{
+            col_mes_resultado: _normalizar_texto_chave(transferencias["_mes_transferencia"]),
+            col_regiao_resultado: _normalizar_texto_chave(transferencias[col_regiao_origem]).str.upper(),
+            "_classe_transferencia": _normalizar_texto_chave(transferencias[col_classe_transferencia]),
+            col_produtor_resultado: _normalizar_texto_chave(transferencias[col_produtor_transferencia]),
+            "_volume_debito": transferencias["_volume_transferencia"],
+        }
+    ).reset_index(drop=True)
+    debitos_base["_transferencia_id"] = debitos_base.index
+    chaves_debito = [col_mes_resultado, col_regiao_resultado, col_produtor_resultado]
+    base_origem = base_agregada[chaves_resultado + [col_valor]].copy()
+    debitos_match = debitos_base[
+        [*chaves_debito, "_classe_transferencia", "_volume_debito", "_transferencia_id"]
+    ].merge(base_origem, on=chaves_debito, how="left", sort=False)
+    total_origem = debitos_match.groupby("_transferencia_id", dropna=False)[col_valor].transform("sum")
+    tem_origem = total_origem.fillna(0.0).gt(0)
+    debitos_match[col_classe_resultado] = debitos_match[col_classe_resultado].fillna(
+        debitos_match["_classe_transferencia"]
+    )
+    debitos_match["_ajuste_transferencia"] = np.where(
+        tem_origem,
+        -debitos_match["_volume_debito"] * debitos_match[col_valor].fillna(0.0) / total_origem,
+        -debitos_match["_volume_debito"],
+    )
+    debitos = debitos_match[chaves_resultado + ["_ajuste_transferencia"]]
+
+    ajustes = pd.concat([creditos, debitos], ignore_index=True)
+    ajustes = ajustes[
+        ajustes[col_regiao_resultado].ne("")
+        & ajustes[col_classe_resultado].ne("")
+        & ajustes[col_produtor_resultado].ne("")
+    ]
+    if ajustes.empty:
+        return base_agregada
+
+    ajustes = ajustes.groupby(chaves_resultado, dropna=False, sort=False, as_index=False)[
+        "_ajuste_transferencia"
+    ].sum()
+    resultado = base_agregada.merge(ajustes, on=chaves_resultado, how="outer", sort=False)
+    resultado[col_valor] = resultado[col_valor].fillna(0.0) + resultado["_ajuste_transferencia"].fillna(0.0)
+    return resultado.drop(columns=["_ajuste_transferencia"])
 
 
 def calcular_data_tanque_disponivel(
