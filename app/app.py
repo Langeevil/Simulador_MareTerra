@@ -42,6 +42,8 @@ calcular_po_atualizado_no_mes_saldo_consolidado = (
     calculos_movimentacao.calcular_po_atualizado_no_mes_saldo_consolidado
 )
 calcular_po_no_mes_saldo_consolidado = calculos_movimentacao.calcular_po_no_mes_saldo_consolidado
+calcular_saldo_po_mes_geral = calculos_movimentacao.calcular_saldo_po_mes_geral
+calcular_saldo_acum_mes_geral = calculos_movimentacao.calcular_saldo_acum_mes_geral
 calcular_total_kg_mes_disponivel_abate_consolidado = (
     calculos_movimentacao.calcular_total_kg_mes_disponivel_abate_consolidado
 )
@@ -831,6 +833,20 @@ def process_consolidated_data(
         ita["dias"],
         months,
     )
+    geral_saldo_po_atualizado_mes = calcular_saldo_po_mes_geral(
+        geral_total_mes,
+        geral_saldo_mes,
+        months,
+    )
+    geral_saldo_po_mes = calcular_saldo_po_mes_geral(
+        geral_total_mes,
+        geral_po_mes,
+        months,
+    )
+    geral_saldo_acum_mes = calcular_saldo_acum_mes_geral(
+        geral_saldo_po_atualizado_mes,
+        months,
+    )
     
     # Regra anterior do consolidado: recalculava o acumulado geral usando os dias de abate da APT.
     # geral_dias_abate = apt["dias"]
@@ -845,11 +861,12 @@ def process_consolidated_data(
     #     col_agrupamento="Grupo",
     # )
     # geral_saldo_acm = df_geral_saldo_mes.set_index("Mês")["Saldo Acm Atualizado / mês"].to_dict()
-    geral_saldo_acm = calcular_saldo_acumulado_consolidado(
-        apt["saldo_acm"],
-        ita["saldo_acm"],
-        months,
-    )
+    # Regra anterior para "Saldo Acm Atualizado / mês":
+    # geral_saldo_acm = calcular_saldo_acumulado_consolidado(
+    #     apt["saldo_acm"],
+    #     ita["saldo_acm"],
+    #     months,
+    # )
 
     output_rows.append(title_row("QUADRO DE", "Disponibilidade", "Dia", "GERAL"))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Dia Disponível Abate", **geral_total_dia})
@@ -865,8 +882,12 @@ def process_consolidated_data(
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Mês Disponível Abate", **geral_total_mes})
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado (No mês) Saldo", **geral_saldo_mes})
     output_rows.append({"Conteúdo / Bloco": "PO (No Mês)", **geral_po_mes})
-    output_rows.append({"Conteúdo / Bloco": "Saldo PO Atual. x Disponível", **geral_saldo_mes})
-    output_rows.append({"Conteúdo / Bloco": "Saldo Acm Atualizado / mês", **geral_saldo_acm})
+    # Linhas antigas removidas do quadro mensal:
+    # output_rows.append({"Conteúdo / Bloco": "Saldo PO Atual. x Disponível", **geral_saldo_mes})
+    # output_rows.append({"Conteúdo / Bloco": "Saldo Acm Atualizado / mês", **geral_saldo_acm})
+    output_rows.append({"Conteúdo / Bloco": "Saldo PO Atualizado", **geral_saldo_po_atualizado_mes})
+    output_rows.append({"Conteúdo / Bloco": "Saldo PO", **geral_saldo_po_mes})
+    output_rows.append({"Conteúdo / Bloco": "Saldo Acum / Mês", **geral_saldo_acum_mes})
 
     return pd.DataFrame(output_rows)
 
@@ -1570,7 +1591,7 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
             [
                 "Total Kg/Mês Disponível Abate",
                 "PO Atualizado (No mês) Saldo",
-                "Saldo Acm Atualizado / mês",
+                "Saldo Acum / Mês",
             ],
         )
         if not chart_consolidado.empty:

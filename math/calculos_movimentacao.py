@@ -276,6 +276,49 @@ def calcular_po_no_mes_saldo_consolidado(
     )
 
 
+def calcular_saldo_po_mes_geral(
+    total_kg_mes_disponivel_abate: Mapping[str, float] | pd.Series,
+    po_no_mes: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula o saldo mensal geral.
+
+    Regra:
+    Saldo PO = Total Kg/Mes Disponivel Abate - PO no mes
+    """
+    def chaves(valores: Mapping[str, float] | pd.Series) -> list[str]:
+        if isinstance(valores, pd.Series):
+            return list(valores.index)
+        return list(valores.keys())
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(
+        dict.fromkeys([*chaves(total_kg_mes_disponivel_abate), *chaves(po_no_mes)])
+    )
+    return {
+        mes: valor_mes(total_kg_mes_disponivel_abate, mes) - valor_mes(po_no_mes, mes)
+        for mes in meses_calculo
+    }
+
+
+def calcular_saldo_acum_mes_geral(
+    saldo_po_atualizado: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula Saldo Acum / Mes no quadro mensal geral.
+
+    Regra:
+    Saldo Acum / Mes = Saldo PO Atualizado + Saldo Acum / Mes anterior
+    """
+    return calcular_saldo_acumulado_dia(saldo_po_atualizado, meses)
+
+
 def calcular_total_kg_mes_disponivel_abate_consolidado(
     total_kg_dia_apt: Mapping[str, float] | pd.Series,
     dias_abate_apt: Mapping[str, float] | pd.Series,
