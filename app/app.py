@@ -41,6 +41,7 @@ calcular_saldo_acumulado_consolidado = calculos_movimentacao.calcular_saldo_acum
 calcular_po_atualizado_no_mes_saldo_consolidado = (
     calculos_movimentacao.calcular_po_atualizado_no_mes_saldo_consolidado
 )
+calcular_po_no_mes_saldo_consolidado = calculos_movimentacao.calcular_po_no_mes_saldo_consolidado
 calcular_total_kg_mes_disponivel_abate_consolidado = (
     calculos_movimentacao.calcular_total_kg_mes_disponivel_abate_consolidado
 )
@@ -823,6 +824,13 @@ def process_consolidated_data(
         ita["dias"],
         months,
     )
+    geral_po_mes = calcular_po_no_mes_saldo_consolidado(
+        apt["po"],
+        apt["dias"],
+        ita["po"],
+        ita["dias"],
+        months,
+    )
     
     # Regra anterior do consolidado: recalculava o acumulado geral usando os dias de abate da APT.
     # geral_dias_abate = apt["dias"]
@@ -856,6 +864,7 @@ def process_consolidated_data(
     output_rows.append(title_row("QUADRO DE", "Disponibilidade", "Mês", "GERAL"))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Mês Disponível Abate", **geral_total_mes})
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado (No mês) Saldo", **geral_saldo_mes})
+    output_rows.append({"Conteúdo / Bloco": "PO (No Mês)", **geral_po_mes})
     output_rows.append({"Conteúdo / Bloco": "Saldo PO Atual. x Disponível", **geral_saldo_mes})
     output_rows.append({"Conteúdo / Bloco": "Saldo Acm Atualizado / mês", **geral_saldo_acm})
 

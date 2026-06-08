@@ -254,6 +254,28 @@ def calcular_po_atualizado_no_mes_saldo_consolidado(
     }
 
 
+def calcular_po_no_mes_saldo_consolidado(
+    po_apt: Mapping[str, float] | pd.Series,
+    dias_abate_apt: Mapping[str, float] | pd.Series,
+    po_ita: Mapping[str, float] | pd.Series,
+    dias_abate_ita: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula a linha PO (No Mes) Saldo do consolidado.
+
+    Regra:
+    (PO APT * Dias de Abate APT) + (PO ITA * Dias de Abate ITA)
+    """
+    return calcular_po_atualizado_no_mes_saldo_consolidado(
+        po_apt,
+        dias_abate_apt,
+        po_ita,
+        dias_abate_ita,
+        meses,
+    )
+
+
 def calcular_total_kg_mes_disponivel_abate_consolidado(
     total_kg_dia_apt: Mapping[str, float] | pd.Series,
     dias_abate_apt: Mapping[str, float] | pd.Series,
