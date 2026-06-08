@@ -538,6 +538,13 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
             output_rows.append(row_dict)
             
         t_dict = {"Conteúdo / Bloco": f"Total {cl}"}
+        # total_label = (
+        #     "Previsão de Disponibilidade Próprio" if cl == "Próprio"
+        #     else "Previsão de Disponibilidade Integração" if cl == "Integração"
+        #     else "Previsão de Disponibilidade Parceria" if cl == "Parceria"
+        #     else f"Total {cl}"
+        # )
+        # t_dict = {"Conteúdo / Bloco": total_label}
         for m in months: t_dict[m] = totals[cl][m]
         output_rows.append(t_dict)
         output_rows.append({col: "" for col in ["Conteúdo / Bloco"] + months})
