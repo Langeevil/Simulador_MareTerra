@@ -41,6 +41,11 @@ FINAL_TOTAL_ROW_LABELS = {
     "peso medio",
 }
 
+ZEBRA_ROW_LABELS = {
+    "saldo po atualizado",
+    "saldo po",
+}
+
 HIGHLIGHT_ROW_MARKERS = (
     "saldo po",
     "total",
@@ -130,6 +135,8 @@ def _is_subtotal(label: str) -> bool:
 
 
 def _is_final_total(label: str) -> bool:
+    if label in ZEBRA_ROW_LABELS:
+        return False
     return label in FINAL_TOTAL_ROW_LABELS
 
 
@@ -178,7 +185,11 @@ def _row_styles(df: pd.DataFrame, label_column: str | None) -> dict[Any, str]:
 
     for index, row in df.iterrows():
         label = _row_label(row, label_column)
-        is_gray_highlight = _is_gray_highlight_row(row) and index not in last_table_rows
+        is_gray_highlight = (
+            _is_gray_highlight_row(row)
+            and label not in ZEBRA_ROW_LABELS
+            and index not in last_table_rows
+        )
 
         if not label:
             if is_gray_highlight:

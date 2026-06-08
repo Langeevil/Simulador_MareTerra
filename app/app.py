@@ -873,8 +873,8 @@ def process_consolidated_data(
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **geral_po_atualizado})
     output_rows.append({"Conteúdo / Bloco": "PO", **geral_po})
     output_rows.append({"Conteúdo / Bloco": "Saldo PO Atualizado", **geral_saldo_atualizado_dia})
-    output_rows.append({"Conteúdo / Bloco": "Saldo Acm Atualizado / Dia", **geral_saldo_acm_atualizado_dia})
     output_rows.append({"Conteúdo / Bloco": "Saldo PO", **geral_saldo_dia})
+    output_rows.append({"Conteúdo / Bloco": "Saldo Acm Atualizado / Dia", **geral_saldo_acm_atualizado_dia})
     output_rows.append({"Conteúdo / Bloco": "Saldo Acm / Dia", **geral_saldo_acm_dia})
     output_rows.append(empty_row())
 
