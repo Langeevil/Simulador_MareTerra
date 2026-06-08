@@ -762,9 +762,14 @@ def process_consolidated_data(
                 months,
             )
         elif region_code == "ITA":
-            # Regra anterior para ITA:
+            # Regras anteriores para ITA:
             # saldo_po_atual_disponivel = multiply_series(data["saldo_dia"], data["dias"])
-            saldo_po_atual_disponivel = referenciar_saldo_atualizado_dia(data["saldo_dia"], months)
+            # saldo_po_atual_disponivel = referenciar_saldo_atualizado_dia(data["saldo_dia"], months)
+            saldo_po_atual_disponivel = calcular_saldo_po_atual_disponivel_dia(
+                data["total_dia"],
+                data["po_atualizado"],
+                months,
+            )
         else:
             saldo_po_atual_disponivel = multiply_series(data["saldo_dia"], data["dias"])
         output_rows.append({
