@@ -843,8 +843,12 @@ def process_consolidated_data(
         geral_po_mes,
         months,
     )
-    geral_saldo_acum_mes = calcular_saldo_acum_mes_geral(
+    geral_saldo_acum_atualizado_mes = calcular_saldo_acum_mes_geral(
         geral_saldo_po_atualizado_mes,
+        months,
+    )
+    geral_saldo_acum_mes = calcular_saldo_acum_mes_geral(
+        geral_saldo_po_mes,
         months,
     )
     
@@ -887,6 +891,7 @@ def process_consolidated_data(
     # output_rows.append({"Conteúdo / Bloco": "Saldo Acm Atualizado / mês", **geral_saldo_acm})
     output_rows.append({"Conteúdo / Bloco": "Saldo PO Atualizado", **geral_saldo_po_atualizado_mes})
     output_rows.append({"Conteúdo / Bloco": "Saldo PO", **geral_saldo_po_mes})
+    output_rows.append({"Conteúdo / Bloco": "Saldo Acum Atualizado / Mês", **geral_saldo_acum_atualizado_mes})
     output_rows.append({"Conteúdo / Bloco": "Saldo Acum / Mês", **geral_saldo_acum_mes})
 
     return pd.DataFrame(output_rows)
@@ -1591,7 +1596,7 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
             [
                 "Total Kg/Mês Disponível Abate",
                 "PO Atualizado (No mês) Saldo",
-                "Saldo Acum / Mês",
+                "Saldo Acum Atualizado / Mês",
             ],
         )
         if not chart_consolidado.empty:

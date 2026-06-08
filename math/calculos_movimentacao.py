@@ -307,16 +307,16 @@ def calcular_saldo_po_mes_geral(
 
 
 def calcular_saldo_acum_mes_geral(
-    saldo_po_atualizado: Mapping[str, float] | pd.Series,
+    saldo_po: Mapping[str, float] | pd.Series,
     meses: Sequence[str] | None = None,
 ) -> dict[str, float]:
     """
-    Calcula Saldo Acum / Mes no quadro mensal geral.
+    Calcula saldo acumulado mensal no quadro mensal geral.
 
     Regra:
-    Saldo Acum / Mes = Saldo PO Atualizado + Saldo Acum / Mes anterior
+    Saldo acumulado = Saldo PO do mes atual + Saldo acumulado do mes anterior
     """
-    return calcular_saldo_acumulado_dia(saldo_po_atualizado, meses)
+    return calcular_saldo_acumulado_dia(saldo_po, meses)
 
 
 def calcular_total_kg_mes_disponivel_abate_consolidado(
