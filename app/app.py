@@ -53,6 +53,7 @@ referenciar_saldo_acumulado_regional = calculos_movimentacao.referenciar_saldo_a
 calcular_saldo_po_atual_disponivel_dia = (
     calculos_movimentacao.calcular_saldo_po_atual_disponivel_dia
 )
+calcular_saldo_acumulado_dia = calculos_movimentacao.calcular_saldo_acumulado_dia
 
 # Tentativa de importação do motor da simulação
 try:
@@ -787,6 +788,14 @@ def process_consolidated_data(
     geral_po = sum_series(apt["po"], ita["po"])
     geral_saldo_atualizado_dia = diff_series(geral_total_dia, geral_po_atualizado)
     geral_saldo_dia = diff_series(geral_total_dia, geral_po)
+    geral_saldo_acm_atualizado_dia = calcular_saldo_acumulado_dia(
+        geral_saldo_atualizado_dia,
+        months,
+    )
+    geral_saldo_acm_dia = calcular_saldo_acumulado_dia(
+        geral_saldo_dia,
+        months,
+    )
     # Regra anterior para "Total Kg/Mês Disponível Abate":
     # geral_total_mes = sum_series(apt["total_mes"], ita["total_mes"])
     geral_total_mes = calcular_total_kg_mes_disponivel_abate_consolidado(
@@ -832,7 +841,9 @@ def process_consolidated_data(
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **geral_po_atualizado})
     output_rows.append({"Conteúdo / Bloco": "PO", **geral_po})
     output_rows.append({"Conteúdo / Bloco": "Saldo PO Atualizado", **geral_saldo_atualizado_dia})
+    output_rows.append({"Conteúdo / Bloco": "Saldo Acm Atualizado / Dia", **geral_saldo_acm_atualizado_dia})
     output_rows.append({"Conteúdo / Bloco": "Saldo PO", **geral_saldo_dia})
+    output_rows.append({"Conteúdo / Bloco": "Saldo Acm / Dia", **geral_saldo_acm_dia})
     output_rows.append(empty_row())
 
     output_rows.append(title_row("QUADRO DE", "Disponibilidade", "Mês", "GERAL"))

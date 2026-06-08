@@ -419,6 +419,30 @@ def calcular_saldo_po_atual_disponivel_dia(
     }
 
 
+def calcular_saldo_acumulado_dia(
+    saldo_dia: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula saldo acumulado dia a dia no quadro geral.
+
+    Regra:
+    Saldo Acm / Dia = Saldo do mes atual + Saldo Acm / Dia do mes anterior
+    """
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(saldo_dia.keys())
+    acumulado = 0.0
+    resultado: dict[str, float] = {}
+    for mes in meses_calculo:
+        acumulado += valor_mes(saldo_dia, mes)
+        resultado[mes] = acumulado
+    return resultado
+
+
 def calcular_status_com_biometria(
     df: pd.DataFrame,
     col_status: str,
