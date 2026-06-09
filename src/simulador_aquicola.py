@@ -819,7 +819,8 @@ def normalizar_marcador_status(valor: object) -> str:
 def definir_status(peso_medio_g: float, curva: Curva | None = None, dias_cultivo: int | None = None, data_atual: date | None = None, dt_ult_biometria: date | None = None) -> str:
     peso_medio_g = round(float(peso_medio_g), 2)
     
-    if dt_ult_biometria and data_atual == dt_ult_biometria:
+    # A primeira linha da projeção de cada tanque é sempre considerada a biometria inicial
+    if dias_cultivo == 0:
         return "Biometria"
         
     if peso_medio_g >= PESO_DESPESCA_G:
