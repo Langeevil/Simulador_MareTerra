@@ -872,8 +872,8 @@ def atingiu_peixe_pronto(
 
 def fator_regional_lote(lote: Lote) -> float:
     regiao_norm = normalizar_nome(lote.regiao)
-    if "itapora" in regiao_norm:
-        return 0.80
+    if "itapora" in regiao_norm or regiao_norm == "ita":
+        return 0.85
     if "parana" in regiao_norm:
         return 0.85
     return 1.0
