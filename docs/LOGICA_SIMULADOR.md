@@ -1,4 +1,4 @@
-# Lógica do Simulador Aquícola
+﻿# Lógica do Simulador Aquícola
 
 Este documento descreve a lógica atual do motor `simulador_aquicola.py`, da interface `app/app.py` e dos módulos de cálculo em `math/`: como os dados são lidos, como a estação é definida, como a curva é aplicada, quais cálculos são usados e como os marcadores de status aparecem no relatório.
 
@@ -132,7 +132,7 @@ Os marcadores atuais são:
 | Dia `30` de cultivo | `Class 1` |
 | Primeiro dia em que o peso médio cruza `120g` | `Class 2` |
 | Peso médio maior ou igual a `900g` ou marcador de curva equivalente | `Peixe Pronto` |
-| Dias `20`, `41`, `94` e `300` sem marcador mais prioritário | `Realizar Biometria` |
+| Exatamente o mesmo dia informado na coluna `Dt.últ Biometria` da planilha | `Biometria` |
 
 As colunas usadas são:
 
@@ -141,7 +141,7 @@ As colunas usadas são:
 | Verão | `Marco de Gestao Verão` |
 | Inverno | `Marco de Gestao Inverno` |
 
-O status `Realizar Biometria` tem prioridade menor que `Class 1`, `Class 2` e `Peixe Pronto`.
+O status `Biometria` será cravado no primeiro dia da projeção de cada tanque e não se repete depois.
 
 O status `Tanque Disponivel` aparece no quinto dia após a liberação do tanque, representando o fim do vazio sanitário configurado em `5` dias.
 
@@ -243,10 +243,10 @@ Preço/kg = preço da faixa em que Peso Medio (g) se encaixa
 Custo de Ração Diário = Consumo Diário (kg) * Preço/kg
 ```
 
-As faixas usam limite inferior inclusivo e limite superior exclusivo. Exemplo:
+As faixas usam limite inferior estritamente maior e limite superior menor ou igual. Exemplo:
 
 ```text
-30 <= Peso Medio (g) < 100
+30 < Peso Medio (g) <= 100
 ```
 
 Na última faixa, o limite superior também é aceito.
@@ -583,6 +583,20 @@ Além da seleção de curva específica, o código aplica um fator de desempenho
 | Alto Desempenho | `1,05` |
 | Desempenho Padrão | `1,00` |
 | Baixo Desempenho | `0,92` |
+
+O motor é flexível e busca automaticamente variações e sinônimos (ex: `Alta Tecnologia`, `Tech-A`, `A` para Alto Desempenho) para evitar que erros de digitação na planilha anulem o bônus/punição.
+
+### Fator de Região
+
+Independente da curva ou cluster do produtor, regiões de clima reconhecidamente mais adverso possuem punições diretas de desempenho (que freiam o crescimento diário):
+
+| Região | Fator |
+| --- | --- |
+| Itaporã (`ITA`) | `0,85` |
+| Paraná (`PRN` ou `PR`) | `0,85` |
+| Demais (ex: Aparecida do Taboado - `APT`) | `1,00` |
+
+Siglas e nomes completos são validados automaticamente via código de correspondência flexível.
 
 ## 13. Transição de Plantel
 
