@@ -369,9 +369,9 @@ def normalizar_cluster(valor: object) -> str:
 
 def fator_cluster_lote(lote: Lote) -> float:
     cluster = normalizar_nome(lote.cluster)
-    if "alta" in cluster:
+    if any(palavra in cluster for palavra in ["alta", "alto", "tech a", "tech-a", "nivel a", "a"]):
         return 1.05
-    if "baixa" in cluster:
+    if any(palavra in cluster for palavra in ["baixa", "baixo", "tech b", "tech-b", "nivel b", "b"]):
         return 0.92
     return 1.0
 
@@ -871,7 +871,7 @@ def fator_regional_lote(lote: Lote) -> float:
     regiao_norm = normalizar_nome(lote.regiao)
     if "itapora" in regiao_norm or regiao_norm == "ita":
         return 0.85
-    if "parana" in regiao_norm:
+    if "parana" in regiao_norm or regiao_norm == "prn":
         return 0.85
     return 1.0
 
