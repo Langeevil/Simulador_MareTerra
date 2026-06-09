@@ -21,7 +21,6 @@ LIMITE_DIAS = 730
 FATOR_AJUSTE_PEIXE_PRONTO = 0.84
 MARCADOR_PEIXE_PRONTO = "pronto"
 VAZIO_SANITARIO_DIAS = 5
-DIAS_BIOMETRIA = {20, 41, 94, 300}
 
 
 SAIDA_COLUNAS = [
@@ -817,14 +816,16 @@ def normalizar_marcador_status(valor: object) -> str:
     return ""
 
 
-def definir_status(peso_medio_g: float, curva: Curva | None = None, dias_cultivo: int | None = None) -> str:
+def definir_status(peso_medio_g: float, curva: Curva | None = None, dias_cultivo: int | None = None, data_atual: date | None = None, dt_ult_biometria: date | None = None) -> str:
     peso_medio_g = round(float(peso_medio_g), 2)
+    
+    if dt_ult_biometria and data_atual == dt_ult_biometria:
+        return "Biometria"
+        
     if peso_medio_g >= PESO_DESPESCA_G:
         return "Peixe Pronto"
     if dias_cultivo == 30:
         return "Class 1"
-    if dias_cultivo in DIAS_BIOMETRIA:
-        return "Realizar Biometria"
     if curva is None:
         return ""
     marcador = normalizar_marcador_status(curva.get("marco", ""))
@@ -982,7 +983,7 @@ def simular_lote(
         0.0,
         0.0,
         0.0,
-        definir_status(pi, curva_inicial, 0),
+        definir_status(pi, curva_inicial, 0, data_inicial, lote.data_alojamento),
         0,
         "",
         0.0,
@@ -1031,7 +1032,7 @@ def simular_lote(
             dias_totais = (data_dia - data_inicial).days + 1
             dias_cultivo = max((data_dia - data_inicial).days, 1)
             semana_num = ((dias_totais - 1) // 7) + 1
-            status = definir_status(pm_relatorio, curva, dias_cultivo)
+            status = definir_status(pm_relatorio, curva, dias_cultivo, data_dia, lote.data_alojamento)
             
             # Fórmula explícita do GDP Acumulado para rastreabilidade
             ganho_peso_total = pm_relatorio - pi
