@@ -32,8 +32,8 @@ for import_dir in (SRC_DIR, APP_DIR, MATH_DIR):
     if str(import_dir) not in sys.path:
         sys.path.insert(0, str(import_dir))
 
-from calculos_saldo import calcular_saldo_acumulado_mes
-import calculos_movimentacao
+from calculos_saldo import calcular_saldo_acumulado_mes  # type: ignore
+import calculos_movimentacao  # type: ignore
 from theme_config import PatternName, is_display_numeric_value, normalize_label, style_dark_regional_report
 from theme_consolidado import style_consolidado_dataframe
 
@@ -62,7 +62,7 @@ aplicar_transferencias_biomassa = calculos_movimentacao.aplicar_transferencias_b
 
 # Tentativa de importação do motor da simulação
 try:
-    from simulador_aquicola import (
+    from simulador_aquicola import (  # type: ignore
         carregar_csv,
         executar,
         preparar_curvas,
@@ -328,10 +328,15 @@ def clean_and_prepare_dataframe(csv_bytes: bytes) -> pd.DataFrame:
         df['classe_calc'] = np.where(df['classe_padrao'].str.contains('Prop|Próp'), 'Próprio',
                             np.where(df['classe_padrao'].str.contains('Parc'), 'Parceria', 'Integração'))
 
-        for flag_col in ['tanques_disponivel', 'tanques_liberados']:
-            if flag_col not in df.columns:
-                df[flag_col] = 0
-            df[flag_col] = pd.to_numeric(df[flag_col], errors='coerce').fillna(0).astype(int)
+        if 'tanques_liberados' not in df.columns:
+            df['tanques_liberados'] = 0
+        df['tanques_liberados'] = pd.to_numeric(df['tanques_liberados'], errors='coerce').fillna(0).astype(int)
+
+        if 'tanques_disponivel' not in df.columns:
+            df['tanques_disponivel'] = ""
+        else:
+            df['tanques_disponivel'] = df['tanques_disponivel'].fillna("").astype(str)
+            df.loc[df['tanques_disponivel'].isin(['0', '0.0', 'nan', 'NaN']), 'tanques_disponivel'] = ""
 
         return df
     except Exception as e:
@@ -1037,7 +1042,7 @@ def build_next_generation_plantel(csv_bytes: bytes) -> bytes:
     df = clean_and_prepare_dataframe(csv_bytes)
     if df.empty or 'tanques_disponivel' not in df.columns:
         return b""
-    disponiveis = df[df['tanques_disponivel'] == 1].sort_values('data')
+    disponiveis = df[df['tanques_disponivel'] != ""].sort_values('data')
     if disponiveis.empty:
         output = pd.DataFrame(
             columns=[

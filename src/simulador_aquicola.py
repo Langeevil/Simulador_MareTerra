@@ -897,7 +897,7 @@ def adicionar_registro(
     mort_acumulada_abs: float,
     status: str,
     tanque_liberado: int = 0,
-    tanque_disponivel: int = 0,
+    tanque_disponivel: str | int = 0,
     ganho_bm_acumulado: float = 0.0,
 ) -> None:
     # Sobrevivencia %
@@ -986,6 +986,9 @@ def simular_lote(
         0.0,
         0.0,
         definir_status(pi, curva_inicial, 0),
+        0,
+        "",
+        0.0,
     )
 
     def simular_um_dia(data_dia: date, registrar: bool) -> None:
@@ -1058,8 +1061,11 @@ def simular_lote(
             
             tanque_liberado = 1 if status == "Peixe Pronto" and data_liberacao is None else 0
 
+            tanque_disponivel_val = ""
             if tanque_liberado:
                 data_liberacao = data_dia
+                tanque_disponivel_val = (data_dia + timedelta(days=VAZIO_SANITARIO_DIAS)).strftime("%d/%m/%Y")
+
             adicionar_registro(
                 registros,
                 lote,
@@ -1078,7 +1084,7 @@ def simular_lote(
                 mort_acumulada_abs,
                 status,
                 tanque_liberado,
-                0,
+                tanque_disponivel_val,
                 ganho_bm_total,
             )
 
@@ -1129,7 +1135,7 @@ def simular_lote(
                 mort_acumulada_abs,
                 "Tanque Disponivel" if dia_vazio == VAZIO_SANITARIO_DIAS else "",
                 0,
-                1 if dia_vazio == VAZIO_SANITARIO_DIAS else 0,
+                data_vazio.strftime("%d/%m/%Y") if dia_vazio == VAZIO_SANITARIO_DIAS else "",
                 0.0,
             )
 
@@ -1206,7 +1212,6 @@ def formatar_relatorio(registros: list[dict]) -> list[dict[str, object]]:
         "Mortalidade Diaria (peixes)",
         "Mortalidade Acumulada (peixes)",
         "Tanques Liberados",
-        "Tanques Disponivel",
     }
 
     for registro in registros:

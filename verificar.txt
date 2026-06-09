@@ -27,28 +27,6 @@ Melhorar a Apresentação Geral do App: Refinar o design visual da interface do 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 Corrigidos
 Arredondamento Geral: Remover completamente as casas decimais de todas as colunas de contagem de peixes, mortalidade, saldos e valores inteiros de controle para garantir uma visualização limpa e sem frações de peixes. OK
 Abate PO Atualizado Total Mês: Deve calcular a projeção mensal multiplicando o PO diário inserido pelo número exato de dias do mês correspondente na linha da tabela: Abate PO Atualizado Total Meˆs=PO Diaˊrio×Dias do Meˆs\text{Abate PO Atualizado Total Mês} = \text{PO Diário} \times \text{Dias do Mês}Abate PO Atualizado Total Meˆs=PO Diaˊrio×Dias do Meˆs
@@ -89,8 +67,6 @@ Colorização Geral de Linhas e Visualização: Implementar uma identidade visua
 
 Persistência Bidirecional: Garantir que os valores digitados na tabela interativa possam ser salvos de volta no parametros_gerenciais.csv e que a edição do CSV recarregue automaticamente os valores na tabela da tela. (corrigido)
 
-
-Não rola
 
 
 
