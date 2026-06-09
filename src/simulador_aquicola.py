@@ -32,7 +32,7 @@ SAIDA_COLUNAS = [
     "Quantidade de Peixes",
     "Peso Medio (g)",
     "Biomassa (kg)",
-    "Fase Nutricional",
+    "Tipo de Ração",
     "Consumo de Racao Diario (kg)",
     "Consumo de Racao na Fase (kg)",
     "Consumo de Racao Acumulado (kg)",
@@ -234,7 +234,7 @@ ALIASES_RACAO = {
         "fim",
     ],
     "preco_kg": ["preco kg", "preco_kg", "preco", "valor kg", "custo kg"],
-    "fase": ["fase", "fase nutricional", "fase produtiva", "tipo de racao", "racao"],
+    "fase": ["fase", "fase nutricional", "fase produtiva", "tipo de racao", "tipo racao", "racao", "fase de producao"],
 }
 
 
@@ -631,20 +631,17 @@ def preparar_racao(tabela: CsvTable) -> list[FaixaRacao]:
 
 
 def buscar_faixa_racao(peso_medio_g: float, faixas_racao: list[FaixaRacao]) -> FaixaRacao | None:
-    inicios = [faixa.peso_inicial_g for faixa in faixas_racao]
-    idx = bisect.bisect_right(inicios, peso_medio_g) - 1
-    if idx >= 0:
-        faixa = faixas_racao[idx]
-        ultima_faixa = idx == len(faixas_racao) - 1
-        if faixa.peso_inicial_g <= peso_medio_g < faixa.peso_final_g or (
-            ultima_faixa and peso_medio_g <= faixa.peso_final_g
-        ):
-            return faixa
-
+    if not faixas_racao:
+        return None
+    
+    if peso_medio_g <= faixas_racao[0].peso_inicial_g:
+        return faixas_racao[0]
+        
     for faixa in faixas_racao:
-        if faixa.peso_inicial_g <= peso_medio_g <= faixa.peso_final_g:
+        if faixa.peso_inicial_g < peso_medio_g <= faixa.peso_final_g:
             return faixa
-    return None
+            
+    return faixas_racao[-1]
 
 
 def adicionar_custos_racao(
@@ -686,7 +683,7 @@ def adicionar_custos_racao(
         consumo_acumulado_por_fase[fase_key] = consumo_acumulado_por_fase.get(fase_key, 0.0) + consumo_diario
 
         linha["Custo de Racao Diario"] = custo_diario
-        linha["Fase Nutricional"] = fase
+        linha["Tipo de Ração"] = fase
         
         # Cria uma coluna específica para a Fase para não quebrar a matemática da TCA Acumulada
         linha["Consumo de Racao na Fase (kg)"] = consumo_acumulado_por_fase[fase_key]
