@@ -13,3 +13,4 @@ dist/
 SimuladorBiomassa.exe
 data/output/old/*
 data/input/old/*
+math/old/*

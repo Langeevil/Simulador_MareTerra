@@ -1013,7 +1013,11 @@ def simular_lote(
         pm_relatorio = pm_real * FATOR_AJUSTE_PEIXE_PRONTO if ajuste_aplicado else pm_real
         bm = q * pm_relatorio / 1000.0
 
-        pv_rate = normalizar_taxa_pv(curva["pv"]) * fator_desempenho
+        # pv_rate = normalizar_taxa_pv(curva["pv"]) * fator_desempenho
+        # racao_dia_kg = bm * pv_rate
+        # ca_kg += racao_dia_kg
+
+        pv_rate = normalizar_taxa_pv(curva["pv"])
         racao_dia_kg = bm * pv_rate
         ca_kg += racao_dia_kg
 
@@ -1033,14 +1037,27 @@ def simular_lote(
             ganho_peso_total = pm_relatorio - pi
             gdp_acumulado = ganho_peso_total / dias_cultivo
             
+            # if status != "Peixe Pronto":
+            #     if not class2_disparado and pm_relatorio >= 120.0:
+            #         status = "Class 2"
+            #         class2_disparado = True
+            #     elif not class1_disparado and dias_cultivo == 30:
+            #         status = "Class 1"
+            #         class1_disparado = True
+            # tanque_liberado = 1 if status == "Peixe Pronto" and data_liberacao is None else 0
+
             if status != "Peixe Pronto":
+                # Dispara as flags de forma independente para que o tempo não anule o ganho de peso
+                if not class1_disparado and dias_cultivo == 30:
+                    status = "Class 1"
+                    class1_disparado = True
+                    
                 if not class2_disparado and pm_relatorio >= 120.0:
                     status = "Class 2"
                     class2_disparado = True
-                elif not class1_disparado and dias_cultivo == 30:
-                    status = "Class 1"
-                    class1_disparado = True
+            
             tanque_liberado = 1 if status == "Peixe Pronto" and data_liberacao is None else 0
+
             if tanque_liberado:
                 data_liberacao = data_dia
             adicionar_registro(

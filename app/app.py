@@ -146,12 +146,12 @@ class RegionalReportSection:
 
 
 REGIONAL_REPORT_SECTIONS: tuple[RegionalReportSection, ...] = (
-    RegionalReportSection("QUADRO DE PEIXE GORDO - PRÓPRIO", "A", "quadro de peixe gordo - proprio"),
-    RegionalReportSection("QUADRO DE PEIXE GORDO - INTEGRAÇÃO", "B", "quadro de peixe gordo - integracao"),
-    RegionalReportSection("QUADRO DE PEIXE GORDO - PARCERIA", "C", "quadro de peixe gordo - parceria"),
-    RegionalReportSection("QUADRO DE PEIXE GORDO TOTAL", "A", "quadro de peixe gordo total"),
-    RegionalReportSection("QUADRO DE DISPONIBILIDADE PARA O ABATE POR DIA", "B", "quadro de disponibilidade para o abate por dia"),
-    RegionalReportSection("QUADRO DO SALDO DA DISPONIBILIDADE PARA O ABATE POR DIA e POR MÊS", "B", "quadro do saldo da disponibilidade"),
+    RegionalReportSection("QD PEIXE GORDO - PRÓPRIO", "A", "qd peixe gordo - proprio"),
+    RegionalReportSection("QD PEIXE GORDO - INTEGRAÇÃO", "B", "qd peixe gordo - integracao"),
+    RegionalReportSection("QD PEIXE GORDO - PARCERIA", "C", "qd peixe gordo - parceria"),
+    RegionalReportSection("QD PEIXE GORDO TOTAL", "A", "qd peixe gordo total"),
+    RegionalReportSection("QD DISP P/ ABATE / DIA", "B", "qd disp p/ abate / dia"),
+    RegionalReportSection("QD SALDO DISP P/ O ABATE / DIA e / MÊS", "B", "qd saldo disp"),
 )
 
 # ==========================================
@@ -661,7 +661,7 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
 
     # Blocos de Produtores
     for cl in ["Próprio", "Integração", "Parceria"]:
-        output_rows.append({"Conteúdo / Bloco": f"QUADRO DE PEIXE GORDO - {cl.upper()} - {region}", **{m: "" for m in months}})
+        output_rows.append({"Conteúdo / Bloco": f"QD PEIXE GORDO - {cl.upper()} - {region}", **{m: "" for m in months}})
         
         for prod in sorted(list(producers_by_classe[cl])):
             row_dict = {"Conteúdo / Bloco": prod}
@@ -684,7 +684,7 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
         output_rows.append({col: "" for col in ["Conteúdo / Bloco"] + months})
 
     # Bloco: Totais e Metas
-    output_rows.append({"Conteúdo / Bloco": f"QUADRO DE PEIXE GORDO TOTAL - {region}", **{m: "" for m in months}})
+    output_rows.append({"Conteúdo / Bloco": f"QD PEIXE GORDO TOTAL - {region}", **{m: "" for m in months}})
     
     prevs = {
         "Previsão de Abate Próprio": totals["Próprio"],
@@ -705,7 +705,7 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
     output_rows.append({col: "" for col in ["Conteúdo / Bloco"] + months})
 
     # Bloco: Disponibilidade por Dia
-    output_rows.append({"Conteúdo / Bloco": f"QUADRO DE DISPONIBILIDADE PARA O ABATE POR DIA - {region}", **{m: "" for m in months}})
+    output_rows.append({"Conteúdo / Bloco": f"QD DISP P/ ABATE / DIA - {region}", **{m: "" for m in months}})
     
     output_rows.append({"Conteúdo / Bloco": "Dias de Abate", **dias_abate})
     
@@ -717,7 +717,7 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
     output_rows.append({col: "" for col in ["Conteúdo / Bloco"] + months})
 
     # Bloco: Saldos
-    output_rows.append({"Conteúdo / Bloco": f"QUADRO DO SALDO DA DISPONIBILIDADE PARA O ABATE POR DIA e POR MÊS - {region}", **{m: "" for m in months}})
+    output_rows.append({"Conteúdo / Bloco": f"QD SALDO DISP P/ ABATE / DIA e / MÊS - {region}", **{m: "" for m in months}})
     
     saldo_dia = {m: kg_dia_total[m] - po_diario[m] for m in months}
     
@@ -770,13 +770,13 @@ def process_consolidated_data(
 
     def title_row(label: str, availability: str, period: str, region: str) -> dict[str, object]:
         availability_parts = (
-            ["DISPONIBILIDADE", "DE BIOMASSA"]
-            if normalize_label(availability) == "disponibilidade de biomassa"
+            ["DISP", "BIOMASSA"]
+            if normalize_label(availability) == "disp biomassa"
             else [availability.upper()]
         )
         return {
             "Conteúdo / Bloco": label,
-            **title_cells(["QUADRO DE", *availability_parts, f"PARA O ABATE {period.upper()}", region.upper()]),
+            **title_cells(["QD", *availability_parts, f"P/ O ABATE {period.upper()}", region.upper()]),
         }
 
     def row_values(source: pd.DataFrame, label: str) -> dict[str, float]:
@@ -1008,7 +1008,7 @@ def process_consolidated_data(
     #     months,
     # )
 
-    output_rows.append(title_row("QUADRO DE", "Disponibilidade", "Dia", "GERAL"))
+    output_rows.append(title_row("QD", "Disponibilidade", "Dia", "GERAL"))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Dia Disponível Abate", **geral_total_dia})
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **geral_po_atualizado})
     output_rows.append({"Conteúdo / Bloco": "PO", **geral_po})
@@ -1018,7 +1018,7 @@ def process_consolidated_data(
     output_rows.append({"Conteúdo / Bloco": "Saldo Acm / Dia", **geral_saldo_acm_dia})
     output_rows.append(empty_row())
 
-    output_rows.append(title_row("QUADRO DE", "Disponibilidade", "Mês", "GERAL"))
+    output_rows.append(title_row("QD", "Disponibilidade", "Mês", "GERAL"))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Mês Disponível Abate", **geral_total_mes})
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado (No mês) Saldo", **geral_saldo_mes})
     output_rows.append({"Conteúdo / Bloco": "PO (No Mês)", **geral_po_mes})
@@ -1272,7 +1272,7 @@ def styled_report_dataframe(df: pd.DataFrame) -> pd.io.formats.style.Styler:
             return [
                 "background-color: #BC933F; color: #111827; font-weight: 900;"
             ] * size
-        if "quadro" in label:
+        if "qd" in label:
             return [
                 "background-color: rgba(23, 65, 59, 0.85); color: #FFFFFF; font-weight: 800;"
             ] * size

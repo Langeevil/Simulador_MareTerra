@@ -192,9 +192,9 @@ def calcular_tca_acumulado(
         name=COLUNA_TCA_ACUMULADO,
     )
 
-    if data_base is not None:
-        tca = _serie_filtrada_por_data_base(df, tca, col_data=col_data, data_base=data_base)
-        tca.name = COLUNA_TCA_ACUMULADO
+    # if data_base is not None:
+    #     tca = _serie_filtrada_por_data_base(df, tca, col_data=col_data, data_base=data_base)
+    #     tca.name = COLUNA_TCA_ACUMULADO
 
     return tca
 

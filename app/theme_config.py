@@ -189,23 +189,23 @@ def _apply_numeric_value_styles(
 
 
 def _section_pattern(label: str) -> PatternName | None:
-    if label.startswith("quadro de peixe gordo - proprio"):
+    if label.startswith("qd peixe gordo - proprio"):
         return "A"
-    if label.startswith("quadro de peixe gordo - integracao"):
+    if label.startswith("qd peixe gordo - integracao"):
         return "B"
-    if label.startswith("quadro de peixe gordo - parceria"):
+    if label.startswith("qd peixe gordo - parceria"):
         return "C"
-    if label.startswith("quadro de peixe gordo total"):
+    if label.startswith("qd peixe gordo total"):
         return "A"
-    if label.startswith("quadro de disponibilidade"):
+    if label.startswith("qd disp"):
         return "B"
-    if label.startswith("quadro do saldo"):
+    if label.startswith("qd saldo"):
         return "C"
     return None
 
 
 def _is_section_header(label: str) -> bool:
-    return label.startswith("quadro")
+    return label.startswith("qd")
 
 
 def _is_section_footer(label: str) -> bool:

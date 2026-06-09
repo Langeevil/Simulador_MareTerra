@@ -126,7 +126,7 @@ def _is_gray_highlight_row(row: pd.Series) -> bool:
 
 
 def _is_section_header(label: str) -> bool:
-    return label in SECTION_HEADER_LABELS or label.startswith("quadro")
+    return label in SECTION_HEADER_LABELS or label.startswith("qd")
 
 
 def _is_subtotal(label: str) -> bool:
@@ -282,7 +282,7 @@ def style_consolidado_dataframe(
     if resolved_label_column:
         formatters[resolved_label_column] = (
             lambda value: ""
-            if normalize_label(value) in {"quadro de", "apt", "ita", "itapora"}
+            if normalize_label(value) in {"qd", "apt", "ita", "itapora"}
             else value
         )
 
