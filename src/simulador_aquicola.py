@@ -1008,11 +1008,27 @@ def simular_lote(
         mort_acumulada_abs += mortos_dia
 
         pm_real += float(curva["gdp_g"]) * fator_desempenho
+
+        ajuste_aplicado = False
+        if registrar and data_dia == data_relatorio:
+            dias_passados = (data_relatorio - data_inicial).days
+            if dias_passados > 0:
+                estacao_inicial = detectar_estacao(data_inicial)
+                dc_inicial = determinar_dia_ciclo(pi, curvas, estacao_inicial, lote.cluster)
+                dc_alvo = dc_inicial + dias_passados
+                
+                curva_alvo = linha_curva(curvas, estacao_inicial, dc_alvo, lote.cluster)
+                pm_real = float(curva_alvo["peso_ref_g"]) * FATOR_AJUSTE_PEIXE_PRONTO
+                
+                estacao_atual = detectar_estacao(data_relatorio)
+                dc = determinar_dia_ciclo(pm_real, curvas, estacao_atual, lote.cluster)
+                
+            ajuste_aplicado = True
+
         if atingiu_peixe_pronto(pm_real, curva, curvas, estacao, lote.cluster):
             peixe_pronto_no_historico = True
 
-        ajuste_aplicado = registrar and data_dia == data_relatorio and peixe_pronto_no_historico
-        pm_relatorio = pm_real * FATOR_AJUSTE_PEIXE_PRONTO if ajuste_aplicado else pm_real
+        pm_relatorio = pm_real
         bm = q * pm_relatorio / 1000.0
 
         # pv_rate = normalizar_taxa_pv(curva["pv"]) * fator_desempenho
