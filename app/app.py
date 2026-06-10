@@ -435,9 +435,8 @@ def csv_mes_or_blank(valor: object) -> str:
 def limpar_origem_terceiros(df: pd.DataFrame) -> pd.DataFrame:
     resultado = df.copy()
     if "Região Origem" not in resultado.columns:
-        resultado["Região Origem"] = "Terceiros"
-    origem = resultado["Região Origem"].fillna("").astype(str).str.strip()
-    resultado["Região Origem"] = origem.mask(origem.eq(""), "Terceiros")
+        resultado["Região Origem"] = ""
+    resultado["Região Origem"] = resultado["Região Origem"].fillna("").astype(str).str.strip()
     return resultado
 
 
@@ -500,7 +499,7 @@ def legacy_terceiros_to_transferencias(df_terceiros: pd.DataFrame) -> pd.DataFra
 
     resultado = pd.DataFrame({
         "Mês": df_terceiros.get("Mês", pd.Series(dtype=str)).astype(str).str.strip(),
-        "Região Origem": "Terceiros",
+        "Região Origem": "",
         "Região Destino": df_terceiros.get("Região Destino", ""),
         "Classe": df_terceiros.get("Classe", ""),
         "Produtor": df_terceiros.get("Produtor", ""),
@@ -1459,7 +1458,7 @@ def render_management_inputs(
         df_transferencias_base.get("Região Origem"),
         df_transferencias_base.get("Região Destino"),
     )
-    regioes_editor = valores_unicos_ordenados(["Terceiros", "APT", "ITA"], regioes_plantel, regioes_transferencias)
+    regioes_editor = valores_unicos_ordenados(["APT", "ITA"], regioes_plantel, regioes_transferencias)
     produtores_editor = valores_unicos_ordenados(produtores_plantel, df_transferencias_base.get("Produtor"))
     produtor_column_config = (
         st.column_config.SelectboxColumn("Produtor", options=produtores_editor, required=True)
