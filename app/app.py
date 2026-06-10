@@ -1466,21 +1466,21 @@ def render_management_inputs(
         else st.column_config.TextColumn("Produtor", required=True)
     )
         
-    col1, col2 = st.columns([1.1, 0.9])
+    col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("#### 1. Metas (PO) e Dias de Abate por Região")
         df_metas_editado = st.data_editor(
             df_metas_base,
-            use_container_width=True,
+            use_container_width=False,
             hide_index=True,
             key=f"{key_prefix}_metas_editor_{data_inicio.isoformat()}_{hash(parametros_bytes)}",
             column_config={
                 "Mês": st.column_config.TextColumn("Mês", disabled=True),
-                "Dias Abate APT": st.column_config.NumberColumn("Dias Abate APT", min_value=1, step=1, format="%d"),
-                "PO Diário APT (kg)": st.column_config.NumberColumn("PO Diário APT (kg)", min_value=0, step=1000, format="%d"),
-                "Dias Abate ITA": st.column_config.NumberColumn("Dias Abate ITA", min_value=1, step=1, format="%d"),
-                "PO Diário ITA (kg)": st.column_config.NumberColumn("PO Diário ITA (kg)", min_value=0, step=1000, format="%d"),
+                "Dias Abate APT": st.column_config.NumberColumn("Dia Ab. APT", min_value=1, step=1, format="%d"),
+                "PO Diário APT (kg)": st.column_config.NumberColumn("PO D. APT (kg)", min_value=0, step=1000, format="%d"),
+                "Dias Abate ITA": st.column_config.NumberColumn("Dia Ab. ITA", min_value=1, step=1, format="%d"),
+                "PO Diário ITA (kg)": st.column_config.NumberColumn("PO D. ITA (kg)", min_value=0, step=1000, format="%d"),
             },
         )
 
@@ -1489,14 +1489,14 @@ def render_management_inputs(
         df_transferencias_editado = st.data_editor(
             df_transferencias_base,
             num_rows="dynamic",
-            use_container_width=True,
+            use_container_width=False,
             hide_index=True,
             column_config={
                 "Mês": st.column_config.SelectboxColumn("Mês", options=meses, required=True),
-                "Região Origem": st.column_config.SelectboxColumn("Região Origem", options=regioes_editor, required=True),
-                "Região Destino": st.column_config.SelectboxColumn("Região Destino", options=["APT", "ITA"], required=True),
+                "Região Origem": st.column_config.SelectboxColumn("Origem", options=regioes_editor, required=True),
+                "Região Destino": st.column_config.SelectboxColumn("Destino", options=["APT", "ITA"], required=True),
                 "Classe": st.column_config.SelectboxColumn("Classe", options=["Próprio", "Integração", "Parceria"], required=True),
-                "Volume (kg)": st.column_config.NumberColumn("Volume (kg)", required=True, step=1000, format="%d"),
+                "Volume (kg)": st.column_config.NumberColumn("Vol. (kg)", required=True, step=1000, format="%d"),
                 "Produtor": produtor_column_config,
             },
             key=f"{key_prefix}_terceiros_transferencias_editor_{data_inicio.isoformat()}_{hash(transferencias_bytes)}"
