@@ -825,11 +825,14 @@ def definir_status(peso_medio_g: float, curva: Curva | None = None, dias_cultivo
         
     if peso_medio_g >= PESO_DESPESCA_G:
         return "Peixe Pronto"
-    if dias_cultivo == 30:
-        return "Class 1"
     if curva is None:
         return ""
     marcador = normalizar_marcador_status(curva.get("marco", ""))
+    
+    # Ignora os marcadores que são controlados de forma dinâmica pelo peso
+    if marcador in ["Class 1", "Class 2", "Peixe Pronto"]:
+        return ""
+        
     if marcador:
         return marcador
     return ""
@@ -895,8 +898,8 @@ def adicionar_registro(
     mort_diaria_abs: float,
     mort_acumulada_abs: float,
     status: str,
-    tanque_liberado: int = 0,
-    tanque_disponivel: str | int = 0,
+    tanque_liberado: str | int = "",
+    tanque_disponivel: str | int = "",
     ganho_bm_acumulado: float = 0.0,
 ) -> None:
     # Sobrevivencia %
@@ -965,8 +968,8 @@ def simular_lote(
     registros: list[dict[str, object]] = []
     peixe_pronto_no_historico = False
     data_liberacao: date | None = None
-    class1_disparado = False
-    class2_disparado = pi >= 120.0
+    class1_disparado = pi >= 30.0
+    class2_disparado = pi >= 150.0
 
     adicionar_registro(
         registros,
@@ -985,7 +988,7 @@ def simular_lote(
         0.0,
         0.0,
         definir_status(pi, curva_inicial, 0, data_inicial, lote.data_alojamento),
-        0,
+        "",
         "",
         0.0,
     )
@@ -1031,10 +1034,6 @@ def simular_lote(
         pm_relatorio = pm_real
         bm = q * pm_relatorio / 1000.0
 
-        # pv_rate = normalizar_taxa_pv(curva["pv"]) * fator_desempenho
-        # racao_dia_kg = bm * pv_rate
-        # ca_kg += racao_dia_kg
-
         pv_rate = normalizar_taxa_pv(curva["pv"])
         racao_dia_kg = bm * pv_rate
         ca_kg += racao_dia_kg
@@ -1044,6 +1043,32 @@ def simular_lote(
         gdp_diario = 0.0 if ajuste_aplicado else pm_relatorio - pm_relatorio_anterior
         tca_diario = 0.0 if ajuste_aplicado or ganho_bm_dia <= 0 else racao_dia_kg / ganho_bm_dia
         tca_ac = ca_kg / ganho_bm_total if ganho_bm_total > 0 else 0.0
+
+        # Verifica se os marcos foram atingidos neste exato dia
+        trigger_class1_hoje = not class1_disparado and pm_relatorio >= 30.0
+        trigger_class2_hoje = not class2_disparado and pm_relatorio >= 150.0
+        trigger_peixe_pronto_hoje = data_liberacao is None and pm_relatorio >= PESO_DESPESCA_G
+
+        # Atualiza as flags independentemente de registrar
+        if trigger_class1_hoje:
+            class1_disparado = True
+        if trigger_class2_hoje:
+            class2_disparado = True
+        if trigger_peixe_pronto_hoje:
+            data_liberacao = data_dia
+
+        is_data_relatorio = data_dia == data_relatorio
+        
+        # Margens de tolerância apenas para o dia de geração do relatório (resgata marcos que passaram raspando)
+        exibir_class1 = trigger_class1_hoje or (is_data_relatorio and 28.0 <= pm_relatorio < 32.0)
+        exibir_class2 = trigger_class2_hoje or (is_data_relatorio and 148.0 <= pm_relatorio < 152.0)
+        exibir_peixe_pronto = trigger_peixe_pronto_hoje or (is_data_relatorio and PESO_DESPESCA_G - 2.0 <= pm_relatorio < PESO_DESPESCA_G + 2.0)
+
+        # Se a margem forçou a exibição no dia do relatório (ex: 149g), garante que a flag seja marcada para não repetir amanhã
+        if is_data_relatorio:
+            if exibir_class1: class1_disparado = True
+            if exibir_class2: class2_disparado = True
+            if exibir_peixe_pronto and data_liberacao is None: data_liberacao = data_dia
 
         if registrar:
             dias_totais = (data_dia - data_inicial).days + 1
@@ -1055,31 +1080,22 @@ def simular_lote(
             ganho_peso_total = pm_relatorio - pi
             gdp_acumulado = ganho_peso_total / dias_cultivo
             
-            # if status != "Peixe Pronto":
-            #     if not class2_disparado and pm_relatorio >= 120.0:
-            #         status = "Class 2"
-            #         class2_disparado = True
-            #     elif not class1_disparado and dias_cultivo == 30:
-            #         status = "Class 1"
-            #         class1_disparado = True
-            # tanque_liberado = 1 if status == "Peixe Pronto" and data_liberacao is None else 0
-
-            if status != "Peixe Pronto":
-                # Dispara as flags de forma independente para que o tempo não anule o ganho de peso
-                if not class1_disparado and dias_cultivo == 30:
-                    status = "Class 1"
-                    class1_disparado = True
-                    
-                if not class2_disparado and pm_relatorio >= 120.0:
-                    status = "Class 2"
-                    class2_disparado = True
-            
-            tanque_liberado = 1 if status == "Peixe Pronto" and data_liberacao is None else 0
-
+            tanque_liberado_val = ""
             tanque_disponivel_val = ""
-            if tanque_liberado:
-                data_liberacao = data_dia
-                tanque_disponivel_val = (data_dia + timedelta(days=VAZIO_SANITARIO_DIAS)).strftime("%d/%m/%Y")
+
+            # Só preenche as colunas se o marco ocorreu hoje ou foi resgatado pela tolerância
+            if exibir_peixe_pronto:
+                status = "Peixe Pronto"
+                tanque_liberado_val = (data_dia + timedelta(days=1)).strftime("%d/%m/%Y")
+                tanque_disponivel_val = (data_dia + timedelta(days=1 + VAZIO_SANITARIO_DIAS)).strftime("%d/%m/%Y")
+            elif exibir_class2:
+                status = "Class 2"
+                tanque_liberado_val = (data_dia + timedelta(days=1)).strftime("%d/%m/%Y")
+                tanque_disponivel_val = (data_dia + timedelta(days=1 + VAZIO_SANITARIO_DIAS)).strftime("%d/%m/%Y")
+            elif exibir_class1:
+                status = "Class 1"
+                tanque_liberado_val = (data_dia + timedelta(days=1)).strftime("%d/%m/%Y")
+                tanque_disponivel_val = (data_dia + timedelta(days=1 + VAZIO_SANITARIO_DIAS)).strftime("%d/%m/%Y")
 
             adicionar_registro(
                 registros,
@@ -1098,7 +1114,7 @@ def simular_lote(
                 mortos_dia,
                 mort_acumulada_abs,
                 status,
-                tanque_liberado,
+                tanque_liberado_val,
                 tanque_disponivel_val,
                 ganho_bm_total,
             )
@@ -1126,33 +1142,6 @@ def simular_lote(
     ):
         data_atual += timedelta(days=1)
         simular_um_dia(data_atual, registrar=True)
-
-    if data_liberacao is not None:
-        for dia_vazio in range(1, VAZIO_SANITARIO_DIAS + 1):
-            data_vazio = data_liberacao + timedelta(days=dia_vazio)
-            dias_totais = (data_vazio - data_inicial).days + 1
-            semana_num = ((dias_totais - 1) // 7) + 1
-            adicionar_registro(
-                registros,
-                lote,
-                data_vazio,
-                semana_num,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                ca_kg,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                mort_acumulada_abs,
-                "Tanque Disponivel" if dia_vazio == VAZIO_SANITARIO_DIAS else "",
-                0,
-                data_vazio.strftime("%d/%m/%Y") if dia_vazio == VAZIO_SANITARIO_DIAS else "",
-                0.0,
-            )
 
     return registros
 
@@ -1226,7 +1215,6 @@ def formatar_relatorio(registros: list[dict]) -> list[dict[str, object]]:
         "Quantidade de Peixes",
         "Mortalidade Diaria (peixes)",
         "Mortalidade Acumulada (peixes)",
-        "Tanques Liberados",
     }
 
     for registro in registros:
