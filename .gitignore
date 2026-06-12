@@ -10,11 +10,13 @@ SimuladorBiomassa.log
 build/
 dist/
 *.spec
-SimuladorBiomassa.exe
-data/output/old/*
-data/output/old 2/*
 data/input/old/*
+data/output/simulacao*
+data/output/old/simulacao*
+data/output/old 2/simulacao*
+data/output/ajustado/*
 math/old/*
 docs/old/*
 update_docs.py
 src/old/*
+adapta/*

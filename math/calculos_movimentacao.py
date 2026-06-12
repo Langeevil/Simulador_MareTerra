@@ -135,8 +135,9 @@ def aplicar_transferencias_biomassa(
             col_classe_resultado: _normalizar_texto_chave(transferencias[col_classe_transferencia]),
             col_produtor_resultado: _normalizar_texto_chave(transferencias[col_produtor_transferencia]),
             "_ajuste_transferencia": transferencias["_volume_transferencia"],
+            "_tooltip_transferencia": "Entrada: +" + transferencias["_volume_transferencia"].round(0).astype(int).astype(str) + "kg (Origem: " + _normalizar_texto_chave(transferencias[col_regiao_origem]).str.upper() + ")",
         }
-    )[chaves_resultado + ["_ajuste_transferencia"]]
+    )[chaves_resultado + ["_ajuste_transferencia", "_tooltip_transferencia"]]
 
     debitos_base = transferencias[
         _normalizar_texto_chave(transferencias[col_regiao_origem]).str.casefold()
@@ -148,13 +149,14 @@ def aplicar_transferencias_biomassa(
             "_classe_transferencia": _normalizar_texto_chave(transferencias[col_classe_transferencia]),
             col_produtor_resultado: _normalizar_texto_chave(transferencias[col_produtor_transferencia]),
             "_volume_debito": transferencias["_volume_transferencia"],
+            "_regiao_destino": _normalizar_texto_chave(transferencias[col_regiao_destino]).str.upper(),
         }
     ).reset_index(drop=True)
     debitos_base["_transferencia_id"] = debitos_base.index
     chaves_debito = [col_mes_resultado, col_regiao_resultado, col_produtor_resultado]
     base_origem = base_agregada[chaves_resultado + [col_valor]].copy()
     debitos_match = debitos_base[
-        [*chaves_debito, "_classe_transferencia", "_volume_debito", "_transferencia_id"]
+        [*chaves_debito, "_classe_transferencia", "_volume_debito", "_transferencia_id", "_regiao_destino"]
     ].merge(base_origem, on=chaves_debito, how="left", sort=False)
     total_origem = debitos_match.groupby("_transferencia_id", dropna=False)[col_valor].transform("sum")
     tem_origem = total_origem.fillna(0.0).gt(0)
@@ -166,7 +168,8 @@ def aplicar_transferencias_biomassa(
         -debitos_match["_volume_debito"] * debitos_match[col_valor].fillna(0.0) / total_origem,
         -debitos_match["_volume_debito"],
     )
-    debitos = debitos_match[chaves_resultado + ["_ajuste_transferencia"]]
+    debitos_match["_tooltip_transferencia"] = "Saída: " + debitos_match["_ajuste_transferencia"].round(0).astype(int).astype(str) + "kg (Destino: " + debitos_match["_regiao_destino"] + ")"
+    debitos = debitos_match[chaves_resultado + ["_ajuste_transferencia", "_tooltip_transferencia"]]
 
     ajustes = pd.concat([creditos, debitos], ignore_index=True)
     ajustes = ajustes[
@@ -177,10 +180,17 @@ def aplicar_transferencias_biomassa(
     if ajustes.empty:
         return base_agregada
 
-    ajustes = ajustes.groupby(chaves_resultado, dropna=False, sort=False, as_index=False)[
+    ajustes_soma = ajustes.groupby(chaves_resultado, dropna=False, sort=False, as_index=False)[
         "_ajuste_transferencia"
     ].sum()
-    resultado = base_agregada.merge(ajustes, on=chaves_resultado, how="outer", sort=False)
+    
+    ajustes_tooltip = ajustes.groupby(chaves_resultado, dropna=False, sort=False, as_index=False)[
+        "_tooltip_transferencia"
+    ].agg(lambda x: "\n".join(x.dropna()))
+    
+    ajustes_finais = ajustes_soma.merge(ajustes_tooltip, on=chaves_resultado, how="left")
+
+    resultado = base_agregada.merge(ajustes_finais, on=chaves_resultado, how="outer", sort=False)
     resultado[col_valor] = resultado[col_valor].fillna(0.0) + resultado["_ajuste_transferencia"].fillna(0.0)
     return resultado.drop(columns=["_ajuste_transferencia"])
 

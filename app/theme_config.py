@@ -167,6 +167,18 @@ def format_negative_value(value: Any) -> Any:
         return f"{NEGATIVE_PREFIX}{_display_number_preserving_sign(value)}"
     return value
 
+def format_transfer_value(value: Any) -> Any:
+    numeric_value = _coerce_display_number(value)
+    if numeric_value is None:
+        return value
+        
+    if numeric_value < 0:
+        return f"📉 {_display_number_preserving_sign(value)}"
+    elif numeric_value > 0:
+        return f"📈 {_display_number_preserving_sign(value)}"
+    else:
+        return f"{_display_number_preserving_sign(value)}"
+
 
 def style_numeric_value(value: Any) -> str:
     numeric_value = _coerce_display_number(value)
@@ -307,6 +319,7 @@ def style_dark_regional_report(
     *,
     label_column: str = "Conteúdo / Bloco",
     default_pattern: PatternName | None = None,
+    df_tooltips: pd.DataFrame | None = None,
 ) -> pd.io.formats.style.Styler:
     label_column = _resolve_label_column(df, label_column)
     row_styles = _row_styles(df, label_column, default_pattern)
@@ -321,6 +334,24 @@ def style_dark_regional_report(
         df.style.apply(apply_row_style, axis=1).format(formatters),
         subset=value_columns,
     )
+
+    if df_tooltips is not None:
+        def apply_tooltip_color(val):
+            if pd.notna(val) and val is not None and str(val).strip() != "":
+                if "Entrada" in str(val): return "color: #4CAF50; font-weight: 800;"
+                if "Saída" in str(val): return "color: #F44336; font-weight: 800;"
+            return ""
+            
+        if hasattr(df_tooltips, "map"):
+            styler = styler.apply(
+                lambda df_vals: df_tooltips.map(apply_tooltip_color),
+                axis=None
+            )
+        else:
+            styler = styler.apply(
+                lambda df_vals: df_tooltips.applymap(apply_tooltip_color),
+                axis=None
+            )
 
     styler = (
         styler

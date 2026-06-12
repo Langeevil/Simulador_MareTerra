@@ -34,8 +34,11 @@ for import_dir in (SRC_DIR, APP_DIR, MATH_DIR):
 
 from calculos_saldo import calcular_saldo_acumulado_mes  # type: ignore
 import calculos_movimentacao  # type: ignore
+from calculos_esperado_realizado import process_esperado_realizado  # type: ignore
 from theme_config import PatternName, is_display_numeric_value, normalize_label, style_dark_regional_report
 from theme_consolidado import style_consolidado_dataframe
+from theme_esperado_realizado import style_esperado_realizado_dataframe
+from calculos_peso_override import aplicar_overrides_peso_medio  # type: ignore
 
 calculos_movimentacao = importlib.reload(calculos_movimentacao)
 calcular_saldo_acumulado_consolidado = calculos_movimentacao.calcular_saldo_acumulado_consolidado
@@ -273,9 +276,20 @@ def clean_and_prepare_dataframe(csv_bytes: bytes) -> pd.DataFrame:
             'ganho de biomassa acumulado (kg)': 'ganho_biomassa_acumulado_kg',
             'mortalidade acumulada (peixes)': 'mortalidade_acumulada_peixes',
             'mortalidade diaria (peixes)': 'mortalidade_diaria_peixes',
+            'custo de racao diario': 'custo_de_racao_diario',
+            'custo de ração diario': 'custo_de_racao_diario',
+            'custo de racao acumulado': 'custo_de_racao_acumulado',
+            'custo de ração acumulado': 'custo_de_racao_acumulado',
+            'tca diario': 'tca_diario',
+            'tca acumulado': 'tca_acumulado',
+            'gdp diario (g/dia)': 'gdp_diario_g_dia',
+            'gdp acumulado (g)': 'gdp_acumulado_g',
+            'sobrevivencia diaria (%)': 'sobrevivencia_diaria_pct',
+            'sobrevivencia acumulada (%)': 'sobrevivencia_acumulada_pct',
             'tanques disponivel': 'tanques_disponivel',
             'tanques disponíveis': 'tanques_disponivel',
             'tanques liberados': 'tanques_liberados',
+            'semana': 'semana',
         }
         df.rename(columns=col_mapping, inplace=True)
         
@@ -296,11 +310,22 @@ def clean_and_prepare_dataframe(csv_bytes: bytes) -> pd.DataFrame:
         df['peso_medio_g'] = pd.to_numeric(df['peso_medio_g'], errors='coerce').fillna(0.0)
 
         for numeric_col in [
+            'quantidade de peixes',
+            'semana',
             'consumo_racao_diario_kg',
+            'consumo_racao_na_fase_kg',
             'consumo_racao_acumulado_kg',
+            'custo_de_racao_diario',
+            'custo_de_racao_acumulado',
             'ganho_biomassa_acumulado_kg',
-            'mortalidade_acumulada_peixes',
+            'tca_diario',
+            'tca_acumulado',
+            'gdp_diario_g_dia',
+            'gdp_acumulado_g',
             'mortalidade_diaria_peixes',
+            'mortalidade_acumulada_peixes',
+            'sobrevivencia_diaria_pct',
+            'sobrevivencia_acumulada_pct',
         ]:
             if numeric_col not in df.columns:
                 df[numeric_col] = 0.0
@@ -329,8 +354,10 @@ def clean_and_prepare_dataframe(csv_bytes: bytes) -> pd.DataFrame:
                             np.where(df['classe_padrao'].str.contains('Parc'), 'Parceria', 'Integração'))
 
         if 'tanques_liberados' not in df.columns:
-            df['tanques_liberados'] = 0
-        df['tanques_liberados'] = pd.to_numeric(df['tanques_liberados'], errors='coerce').fillna(0).astype(int)
+            df['tanques_liberados'] = ""
+        else:
+            df['tanques_liberados'] = df['tanques_liberados'].fillna("").astype(str)
+            df.loc[df['tanques_liberados'].isin(['0', '0.0', 'nan', 'NaN']), 'tanques_liberados'] = ""
 
         if 'tanques_disponivel' not in df.columns:
             df['tanques_disponivel'] = ""
@@ -648,32 +675,53 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
 
     # 4. Estrutura de Memória Otimizada (Dicionário de Matrizes)
     block_data = defaultdict(lambda: defaultdict(float))
+    tooltip_data = defaultdict(lambda: defaultdict(str))
     producers_by_classe = {"Próprio": set(), "Integração": set(), "Parceria": set()}
 
     # Alimentar dados da simulação
     for _, row in df_grouped.iterrows():
         c, p, m, v = row['classe_calc'], row['produtor'], row['mes'], row['biomassa_kg']
+        t = row.get('_tooltip_transferencia', '')
         if m in months:
             block_data[(c, p)][m] += v
+            if pd.notna(t) and t != '':
+                tooltip_data[(c, p)][m] = str(t)
             producers_by_classe[c].add(p)
 
     # ==========================================
     # MONTAGEM DO LAYOUT CORPORATIVO EXCEL
     # ==========================================
     output_rows = []
+    tooltip_rows = []
+    
+    def add_row(row_dict, tooltip_dict=None):
+        output_rows.append(row_dict)
+        if tooltip_dict is None:
+            tooltip_dict = {"Conteúdo / Bloco": None}
+            for col in row_dict.keys():
+                if col != "Conteúdo / Bloco":
+                    tooltip_dict[col] = None
+        else:
+            for k, v in tooltip_dict.items():
+                if v == "":
+                    tooltip_dict[k] = None
+        tooltip_rows.append(tooltip_dict)
+
     totals = {c: {m: 0.0 for m in months} for c in producers_by_classe.keys()}
 
     # Blocos de Produtores
     for cl in ["Próprio", "Integração", "Parceria"]:
-        output_rows.append({"Conteúdo / Bloco": f"QD PEIXE GORDO - {cl.upper()} - {region}", **{m: "" for m in months}})
+        add_row({"Conteúdo / Bloco": f"QD PEIXE GORDO - {cl.upper()} - {region}", **{m: "" for m in months}})
         
         for prod in sorted(list(producers_by_classe[cl])):
             row_dict = {"Conteúdo / Bloco": prod}
+            t_row_dict = {"Conteúdo / Bloco": None}
             for m in months:
                 val = block_data[(cl, prod)][m]
                 row_dict[m] = val
+                t_row_dict[m] = tooltip_data[(cl, prod)][m]
                 totals[cl][m] += val
-            output_rows.append(row_dict)
+            add_row(row_dict, t_row_dict)
             
         t_dict = {"Conteúdo / Bloco": f"Total {cl}"}
         # total_label = (
@@ -684,11 +732,11 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
         # )
         # t_dict = {"Conteúdo / Bloco": total_label}
         for m in months: t_dict[m] = totals[cl][m]
-        output_rows.append(t_dict)
-        output_rows.append({col: "" for col in ["Conteúdo / Bloco"] + months})
+        add_row(t_dict)
+        add_row({col: "" for col in ["Conteúdo / Bloco"] + months})
 
     # Bloco: Totais e Metas
-    output_rows.append({"Conteúdo / Bloco": f"QD PEIXE GORDO TOTAL - {region}", **{m: "" for m in months}})
+    add_row({"Conteúdo / Bloco": f"QD PEIXE GORDO TOTAL - {region}", **{m: "" for m in months}})
     
     prevs = {
         "Previsão de Abate Próprio": totals["Próprio"],
@@ -703,32 +751,32 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
     abate_po_mes = {m: po_diario[m] * dias_abate[m] for m in months}
 
     for label, data_dict in prevs.items():
-        output_rows.append({"Conteúdo / Bloco": label, **data_dict})
-    output_rows.append({"Conteúdo / Bloco": "Previsão Disponibilidade Total", **prev_total})
-    output_rows.append({"Conteúdo / Bloco": "Abate PO Atualizado Total Mês", **abate_po_mes})
-    output_rows.append({col: "" for col in ["Conteúdo / Bloco"] + months})
+        add_row({"Conteúdo / Bloco": label, **data_dict})
+    add_row({"Conteúdo / Bloco": "Previsão Disponibilidade Total", **prev_total})
+    add_row({"Conteúdo / Bloco": "Abate PO Atualizado Total Mês", **abate_po_mes})
+    add_row({col: "" for col in ["Conteúdo / Bloco"] + months})
 
     # Bloco: Disponibilidade por Dia
-    output_rows.append({"Conteúdo / Bloco": f"QD DISP P/ ABATE / DIA - {region}", **{m: "" for m in months}})
+    add_row({"Conteúdo / Bloco": f"QD DISP P/ ABATE / DIA - {region}", **{m: "" for m in months}})
     
-    output_rows.append({"Conteúdo / Bloco": "Dias de Abate", **dias_abate})
+    add_row({"Conteúdo / Bloco": "Dias de Abate", **dias_abate})
     
     kg_dia_total = {m: prev_total[m] / dias_abate[m] for m in months}
-    output_rows.append({"Conteúdo / Bloco": "Kg/Dia Próprio", **{m: prevs["Previsão de Abate Próprio"][m] / dias_abate[m] for m in months}})
-    output_rows.append({"Conteúdo / Bloco": "Kg/Dia Integração", **{m: prevs["Previsão de Abate Integração"][m] / dias_abate[m] for m in months}})
-    output_rows.append({"Conteúdo / Bloco": "Kg/Dia Parceria", **{m: prevs["Previsão de Abate Parceria"][m] / dias_abate[m] for m in months}})
-    output_rows.append({"Conteúdo / Bloco": "Total Kg/Dia Disponível Abate", **kg_dia_total})
-    output_rows.append({col: "" for col in ["Conteúdo / Bloco"] + months})
+    add_row({"Conteúdo / Bloco": "Kg/Dia Próprio", **{m: prevs["Previsão de Abate Próprio"][m] / dias_abate[m] for m in months}})
+    add_row({"Conteúdo / Bloco": "Kg/Dia Integração", **{m: prevs["Previsão de Abate Integração"][m] / dias_abate[m] for m in months}})
+    add_row({"Conteúdo / Bloco": "Kg/Dia Parceria", **{m: prevs["Previsão de Abate Parceria"][m] / dias_abate[m] for m in months}})
+    add_row({"Conteúdo / Bloco": "Total Kg/Dia Disponível Abate", **kg_dia_total})
+    add_row({col: "" for col in ["Conteúdo / Bloco"] + months})
 
     # Bloco: Saldos
-    output_rows.append({"Conteúdo / Bloco": f"QD SALDO DISP P/ ABATE / DIA e / MÊS - {region}", **{m: "" for m in months}})
+    add_row({"Conteúdo / Bloco": f"QD SALDO DISP P/ ABATE / DIA e / MÊS - {region}", **{m: "" for m in months}})
     
     saldo_dia = {m: kg_dia_total[m] - po_diario[m] for m in months}
     
-    output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **po_diario})
+    add_row({"Conteúdo / Bloco": "PO Atualizado", **po_diario})
     # Linha PO mantida comentada para poder ser reativada futuramente nas abas regionais APT/ITA.
-    # output_rows.append({"Conteúdo / Bloco": "PO", **po_diario})
-    output_rows.append({"Conteúdo / Bloco": "Saldo Atualizado / dia", **saldo_dia})
+    # add_row({"Conteúdo / Bloco": "PO", **po_diario})
+    add_row({"Conteúdo / Bloco": "Saldo Atualizado / dia", **saldo_dia})
 
     df_saldo_mes = pd.DataFrame({"Mês": months})
     df_saldo_mes["Região"] = region
@@ -742,9 +790,9 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
     )
     saldo_acm = df_saldo_mes.set_index("Mês")["Saldo Acm Atualizado / mês"].to_dict()
         
-    output_rows.append({"Conteúdo / Bloco": "Saldo Acm Atualizado / mês", **saldo_acm})
+    add_row({"Conteúdo / Bloco": "Saldo Acm Atualizado / mês", **saldo_acm})
 
-    return pd.DataFrame(output_rows)
+    return pd.DataFrame(output_rows), pd.DataFrame(tooltip_rows)
 
 
 @st.cache_data(show_spinner=False)
@@ -895,7 +943,7 @@ def process_consolidated_data(
             po_regional = referenciar_po_regional(data["po"], months)
         else:
             po_regional = data["po"]
-        output_rows.append({"Conteúdo / Bloco": "PO", **po_regional})
+        # output_rows.append({"Conteúdo / Bloco": "PO", **po_regional})
         if region_code == "APT":
             # Regras anteriores para APT:
             # saldo_po_atual_disponivel = multiply_series(data["saldo_dia"], data["dias"])
@@ -1015,7 +1063,7 @@ def process_consolidated_data(
     output_rows.append(title_row("QD", "Disponibilidade", "Dia", "GERAL"))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Dia Disponível Abate", **geral_total_dia})
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **geral_po_atualizado})
-    output_rows.append({"Conteúdo / Bloco": "PO", **geral_po})
+    # output_rows.append({"Conteúdo / Bloco": "PO", **geral_po})
     output_rows.append({"Conteúdo / Bloco": "Saldo PO Atualizado", **geral_saldo_atualizado_dia})
     output_rows.append({"Conteúdo / Bloco": "Saldo PO", **geral_saldo_dia})
     output_rows.append({"Conteúdo / Bloco": "Saldo Acm Atualizado / Dia", **geral_saldo_acm_atualizado_dia})
@@ -1025,7 +1073,7 @@ def process_consolidated_data(
     output_rows.append(title_row("QD", "Disponibilidade", "Mês", "GERAL"))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Mês Disponível Abate", **geral_total_mes})
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado (No mês) Saldo", **geral_saldo_mes})
-    output_rows.append({"Conteúdo / Bloco": "PO (No Mês)", **geral_po_mes})
+    # output_rows.append({"Conteúdo / Bloco": "PO (No Mês)", **geral_po_mes})
     # Linhas antigas removidas do quadro mensal:
     # output_rows.append({"Conteúdo / Bloco": "Saldo PO Atual. x Disponível", **geral_saldo_mes})
     # output_rows.append({"Conteúdo / Bloco": "Saldo Acm Atualizado / mês", **geral_saldo_acm})
@@ -1131,7 +1179,7 @@ def auto_width_column_config(
         header = str(column)
         max_chars = max([visible_text_length(header), *df[column].map(visible_text_length).tolist()])
 
-        is_label_column = normalize_label(header) == "conteudo / bloco"
+        is_label_column = normalize_label(header) in ("conteudo / bloco", "metrica")
         has_numeric_values = any(is_display_numeric_value(value) for value in df[column].tolist())
 
         if is_label_column:
@@ -1339,8 +1387,10 @@ def render_report_dataframe(
     *,
     height: int,
     use_dark_theme: bool = False,
+    df_tooltips: pd.DataFrame | None = None,
 ) -> None:
     display_df = format_df_for_display(df)
+    display_tooltips = format_df_for_display(df_tooltips) if df_tooltips is not None else None
     column_config = auto_width_column_config(display_df)
 
     if not use_dark_theme:
@@ -1353,7 +1403,7 @@ def render_report_dataframe(
         return
 
     try:
-        styler = style_dark_regional_report(display_df)
+        styler = style_dark_regional_report(display_df, df_tooltips=display_tooltips)
     except ValueError as exc:
         st.warning(f"Nao foi possivel aplicar o tema escuro regional: {exc}")
         styler = styled_report_dataframe(display_df)
@@ -1731,6 +1781,99 @@ def render_curve_programs_preview(curvas_df: pd.DataFrame) -> None:
 # GERAÇÃO DO DASHBOARD E INTERFACE PRINCIPAL
 # ==========================================
 
+def render_unified_peso_medio_editor(df_base: pd.DataFrame, df_metas: pd.DataFrame) -> None:
+    st.markdown("---")
+    with st.expander("🎯 Painel Central: Forçar Pesos Médios e Antecipar Abates", expanded=False):
+        st.caption("Adicione produtores à lista e edite os pesos para simular cenários em todas as abas. Deixe em branco para usar o original.")
+        
+        produtores_por_regiao = {
+            "APT": sorted(df_base[df_base['regiao_calc'] == "APT"]['produtor'].unique()),
+            "ITA": sorted(df_base[df_base['regiao_calc'] == "ITA"]['produtor'].unique())
+        }
+        meses = df_metas['Mês'].tolist() if df_metas is not None and 'Mês' in df_metas.columns else sorted(df_base['mes'].unique())
+        
+        # Sincroniza a tabela inicial com as overrides já salvas
+        if "unified_editor_rows" not in st.session_state:
+            rows = []
+            base = st.session_state.get("peso_medio_overrides", {"APT": {}, "ITA": {}})
+            for reg, prods in base.items():
+                for p, m_vals in prods.items():
+                    if not m_vals: continue
+                    row = {"Região": reg, "Produtor": p}
+                    for m in meses:
+                        val = m_vals.get(m, 0.0)
+                        row[m] = float(val) if val else None
+                    rows.append(row)
+            st.session_state["unified_editor_rows"] = rows
+            
+        st.markdown("##### 1. Adicionar Produtor para Ajuste")
+        c1, c2, c3 = st.columns([2, 3, 2])
+        with c1:
+            sel_regiao = st.selectbox("Região", ["APT", "ITA"], key="sel_regiao_add")
+        with c2:
+            opcoes_produtor = produtores_por_regiao.get(sel_regiao, [])
+            sel_produtor = st.selectbox("Produtor", opcoes_produtor, key="sel_produtor_add")
+        with c3:
+            st.write("") # spacer
+            if st.button("➕ Adicionar à Tabela", use_container_width=True):
+                if sel_produtor:
+                    exists = any(r.get("Região") == sel_regiao and r.get("Produtor") == sel_produtor for r in st.session_state["unified_editor_rows"])
+                    if not exists:
+                        new_row = {"Região": sel_regiao, "Produtor": sel_produtor}
+                        for m in meses:
+                            new_row[m] = None
+                        st.session_state["unified_editor_rows"].append(new_row)
+                        st.rerun()
+                        
+        st.markdown("##### 2. Tabela de Overrides (Edição de Pesos)")
+        if not st.session_state["unified_editor_rows"]:
+            st.info("Nenhum ajuste ativo. Use a barra acima para adicionar um produtor à lista.")
+        else:
+            df_editor = pd.DataFrame(st.session_state["unified_editor_rows"])
+            
+            col_config = {
+                "Região": st.column_config.TextColumn("Região", disabled=True),
+                "Produtor": st.column_config.TextColumn("Produtor", disabled=True),
+            }
+            for m in meses:
+                col_config[m] = st.column_config.NumberColumn(m, min_value=0.0, max_value=10000.0, step=50.0, format="%g g")
+                # col_config[m] = st.column_config.NumberColumn(m, min_value=0.0, max_value=500000.0, step=50.0, format="%g g")
+                
+            edited_df = st.data_editor(
+                df_editor,
+                hide_index=True,
+                column_config=col_config,
+                use_container_width=True,
+                key="editor_peso_unified"
+            )
+            
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                if st.button("💾 Salvar Histórico", type="primary", use_container_width=True):
+                    # Save to persistent state and trigger CSV creation
+                    new_overrides = {"APT": {}, "ITA": {}}
+                    for _, row in edited_df.iterrows():
+                        r_reg = row["Região"]
+                        r_prod = row["Produtor"]
+                        for m in meses:
+                            val = row[m]
+                            if pd.notna(val) and float(val) > 0:
+                                if r_prod not in new_overrides[r_reg]:
+                                    new_overrides[r_reg][r_prod] = {}
+                                new_overrides[r_reg][r_prod][m] = float(val)
+                    
+                    st.session_state["peso_medio_overrides"] = new_overrides
+                    st.session_state["unified_editor_rows"] = edited_df.to_dict("records")
+                    st.session_state["trigger_save_ajustado"] = True
+                    st.rerun()
+            with col2:
+                if st.button("Limpar Todos os Ajustes"):
+                    st.session_state["peso_medio_overrides"] = {"APT": {}, "ITA": {}}
+                    st.session_state["unified_editor_rows"] = []
+                    st.session_state.pop("editor_peso_unified", None)
+                    st.rerun()
+
+
 def render_excel_style_view(csv_bytes: bytes) -> None:
     st.subheader("📋 Relatório Corporativo de Projeção de Abate")
     st.caption("Visões estruturadas por blocos e regiões (Idêntico ao modelo Excel de controle).")
@@ -1755,10 +1898,98 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
         if df_base.empty:
             st.error("Falha ao analisar a base de dados. Verifique a estrutura do CSV gerado.")
             return
+            
+        # Extract live edits from data_editor state so it updates automatically
+        base_overrides = st.session_state.get("peso_medio_overrides", {"APT": {}, "ITA": {}})
+        import copy
+        live_overrides = copy.deepcopy(base_overrides)
+        
+        editor_state = st.session_state.get("editor_peso_unified")
+        if editor_state and "edited_rows" in editor_state:
+            base_rows = st.session_state.get("unified_editor_rows", [])
+            for row_idx_str, edits in editor_state["edited_rows"].items():
+                try:
+                    row_idx = int(row_idx_str)
+                except ValueError:
+                    continue
+                if row_idx < len(base_rows):
+                    r_reg = base_rows[row_idx].get("Região")
+                    r_prod = base_rows[row_idx].get("Produtor")
+                    if not r_reg or not r_prod:
+                        continue
+                    if r_prod not in live_overrides.get(r_reg, {}):
+                        if r_reg not in live_overrides: live_overrides[r_reg] = {}
+                        live_overrides[r_reg][r_prod] = {}
+                    
+                    for col_name, val in edits.items():
+                        if val is not None and float(val) > 0:
+                            live_overrides[r_reg][r_prod][col_name] = float(val)
+                        else:
+                            live_overrides[r_reg][r_prod].pop(col_name, None)
 
-        df_apt_raw = process_regional_data(df_base, "APT", df_metas, df_terceiros)
-        df_ita_raw = process_regional_data(df_base, "ITA", df_metas, df_terceiros)
+        # Apply live overrides to see changes immediately
+        df_base = aplicar_overrides_peso_medio(df_base, live_overrides)
+        
+        # Salva o live_overrides no session_state para o botão Salvar poder acessar facilmente
+        st.session_state["live_peso_medio_overrides"] = live_overrides
+        
+        if st.session_state.pop("trigger_save_ajustado", False):
+            try:
+                from datetime import datetime
+                from simulador_aquicola import SAIDA_COLUNAS, formatar_relatorio, salvar_csv
+                
+                ajustado_dir = Path("d:/mareterra/simulador2/data/output/ajustado")
+                ajustado_dir.mkdir(parents=True, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                save_path = ajustado_dir / f"Relatorio_Gerencial_Ajustado_{timestamp}.csv"
+                
+                export_df = df_base.copy()
+                
+                # Mapeamento reverso para restaurar as colunas originais do SAIDA_COLUNAS
+                col_mapping = {
+                    'região': 'regiao', 'peso médio (g)': 'peso_medio_g', 'peso medio (g)': 'peso_medio_g',
+                    'biomassa (kg)': 'biomassa_kg', 'biomassa': 'biomassa_kg', 'fase nutricional': 'fase_nutricional',
+                    'status': 'status', 'produtor': 'produtor', 'tanque': 'tanque', 'classe': 'classe', 'data': 'data',
+                    'consumo de racao diario (kg)': 'consumo_racao_diario_kg', 'consumo de ração diario (kg)': 'consumo_racao_diario_kg',
+                    'consumo de racao na fase (kg)': 'consumo_racao_na_fase_kg', 'consumo de ração na fase (kg)': 'consumo_racao_na_fase_kg',
+                    'consumo de racao acumulado (kg)': 'consumo_racao_acumulado_kg', 'consumo de ração acumulado (kg)': 'consumo_racao_acumulado_kg',
+                    'ganho de biomassa acumulado (kg)': 'ganho_biomassa_acumulado_kg', 'mortalidade acumulada (peixes)': 'mortalidade_acumulada_peixes',
+                    'mortalidade diaria (peixes)': 'mortalidade_diaria_peixes', 'tanques disponivel': 'tanques_disponivel',
+                    'tanques disponíveis': 'tanques_disponivel', 'tanques liberados': 'tanques_liberados'
+                }
+                
+                lower_to_saida = {col.lower(): col for col in SAIDA_COLUNAS}
+                for orig, mapped in col_mapping.items():
+                    for sc in SAIDA_COLUNAS:
+                        if sc.lower() == orig:
+                            lower_to_saida[mapped] = sc
+                            
+                export_df = export_df.rename(columns=lower_to_saida)
+                
+                # Mantém apenas as colunas do simulador original na ordem correta
+                cols_to_keep = [c for c in SAIDA_COLUNAS if c in export_df.columns]
+                export_df = export_df[cols_to_keep]
+                
+                # Converte data para objeto python date para o formatador
+                if 'Data' in export_df.columns:
+                    export_df['Data'] = pd.to_datetime(export_df['Data']).dt.date
+                    
+                # Substitui NaNs por strings vazias para que o Status não fique com "nan"
+                export_df = export_df.fillna("")
+                
+                # Exporta usando a MESMA formatação string do simulador original
+                registros = export_df.to_dict(orient="records")
+                registros_formatados = formatar_relatorio(registros)
+                salvar_csv(save_path, registros_formatados)
+                
+                st.toast(f"Relatório salvo em data/output/ajustado! ({save_path.name})", icon="✅")
+            except Exception as e:
+                st.error(f"Erro ao salvar arquivo ajustado: {e}")
+
+        df_apt_raw, tooltip_apt_raw = process_regional_data(df_base, "APT", df_metas, df_terceiros)
+        df_ita_raw, tooltip_ita_raw = process_regional_data(df_base, "ITA", df_metas, df_terceiros)
         df_consolidado_raw = process_consolidated_data(df_base, df_apt_raw, df_ita_raw, df_metas)
+        df_er_diario, df_er_semanal, df_er_mensal = process_esperado_realizado()
     
     excel_bytes = export_to_excel(df_apt_raw, df_ita_raw, df_consolidado_raw)
     
@@ -1778,9 +2009,12 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
             mime="text/csv",
             use_container_width=True,
         )
+        
+    # Renderiza o Painel Único de Overrides antes das abas
+    render_unified_peso_medio_editor(df_base, df_metas)
     
-    tab_apt, tab_ita, tab_consolidado = st.tabs(
-        ["🏭 APT (Aparecida do Taboado)", "🏭 ITA (Itaporã)", "📊 Consolidado APT + ITA"]
+    tab_apt, tab_ita, tab_consolidado, tab_esperado_realizado = st.tabs(
+        ["🏭 APT (Aparecida do Taboado)", "🏭 ITA (Itaporã)", "📊 Consolidado APT + ITA", "🎯 Esperado x Realizado"]
     )
     with tab_apt:
         chart_apt = dataframe_for_chart(
@@ -1789,7 +2023,7 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
         )
         if not chart_apt.empty:
             render_line_chart(chart_apt, "APT - Biomassa disponível x PO mensal", "Biomassa / abate projetado (kg)")
-        render_report_dataframe(df_apt_raw, height=550, use_dark_theme=True)
+        render_report_dataframe(df_apt_raw, height=550, use_dark_theme=True, df_tooltips=tooltip_apt_raw)
     with tab_ita:
         chart_ita = dataframe_for_chart(
             df_ita_raw,
@@ -1797,7 +2031,7 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
         )
         if not chart_ita.empty:
             render_line_chart(chart_ita, "ITA - Biomassa disponível x PO mensal", "Biomassa / abate projetado (kg)")
-        render_report_dataframe(df_ita_raw, height=550, use_dark_theme=True)
+        render_report_dataframe(df_ita_raw, height=550, use_dark_theme=True, df_tooltips=tooltip_ita_raw)
     with tab_consolidado:
         chart_consolidado = dataframe_for_chart(
             df_consolidado_raw,
@@ -1842,6 +2076,72 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
             height=720,
             column_config=auto_width_column_config(display_consolidado, min_width=132),
         )
+
+    with tab_esperado_realizado:
+        st.markdown("### 🎯 Comparativo Esperado x Realizado")
+        st.caption("Visão transposta: métricas nas linhas e períodos nas colunas.")
+        
+        # Filtros exclusivos para essa aba
+        er_col1, er_col2 = st.columns([1, 3])
+        with er_col1:
+            periodos_opcoes = {
+                "Últimos 3 períodos": 3,
+                "Últimos 6 períodos": 6,
+                "Últimos 12 períodos": 12,
+                "Todos": None
+            }
+            er_filtro = st.selectbox("Limitar visualização a:", list(periodos_opcoes.keys()), index=1)
+            num_periodos = periodos_opcoes[er_filtro]
+            
+        def apply_er_filter(df: pd.DataFrame, n: int | None) -> pd.DataFrame:
+            if n is None or df.empty:
+                return df
+            cols = list(df.columns)
+            return df[cols[0:1] + cols[1:n+1]]
+            
+        df_er_mensal_filtrado = apply_er_filter(df_er_mensal, num_periodos)
+        df_er_semanal_filtrado = apply_er_filter(df_er_semanal, num_periodos)
+        df_er_diario_filtrado = apply_er_filter(df_er_diario, num_periodos)
+        
+        def er_column_config(df_er):
+            cfg = { "Métrica": st.column_config.Column("Métrica", width=200, alignment="left") }
+            for col in df_er.columns:
+                if col != "Métrica":
+                    cfg[col] = st.column_config.Column(col, alignment="center")
+            return cfg
+
+        st.markdown("#### 📅 Visão Mensal")
+        if not df_er_mensal_filtrado.empty:
+            st.dataframe(
+                style_esperado_realizado_dataframe(df_er_mensal_filtrado, hide_index=True, pattern_name="C"),
+                use_container_width=True,
+                hide_index=True,
+                column_config=er_column_config(df_er_mensal_filtrado)
+            )
+        else:
+            st.info("Nenhum dado mensal disponível.")
+            
+        st.markdown("#### 📆 Visão Semanal")
+        if not df_er_semanal_filtrado.empty:
+            st.dataframe(
+                style_esperado_realizado_dataframe(df_er_semanal_filtrado, hide_index=True, pattern_name="B"),
+                use_container_width=True,
+                hide_index=True,
+                column_config=er_column_config(df_er_semanal_filtrado)
+            )
+        else:
+            st.info("Nenhum dado semanal disponível.")
+            
+        st.markdown("#### 🗓️ Visão Diária")
+        if not df_er_diario_filtrado.empty:
+            st.dataframe(
+                style_esperado_realizado_dataframe(df_er_diario_filtrado, hide_index=True, pattern_name="A"),
+                use_container_width=True,
+                hide_index=True,
+                column_config=er_column_config(df_er_diario_filtrado)
+            )
+        else:
+            st.info("Nenhum dado diário disponível.")
 
 def render_common_settings() -> tuple[date, str, bool]:
     st.subheader("Configurações da simulação")

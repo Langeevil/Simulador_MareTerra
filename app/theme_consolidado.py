@@ -259,6 +259,7 @@ def style_consolidado_dataframe(
     *,
     label_column: str | None = None,
     hide_index: bool = True,
+    df_tooltips: pd.DataFrame | None = None,
 ) -> pd.io.formats.style.Styler:
     """Aplica o tema da tela Consolidado (APT + ITA) em um DataFrame.
 
@@ -287,6 +288,24 @@ def style_consolidado_dataframe(
         )
 
     styler = styler.format(formatters)
+    
+    if df_tooltips is not None:
+        def apply_tooltip_color(val):
+            if pd.notna(val) and val is not None and str(val).strip() != "":
+                if "Entrada" in str(val): return "color: #4CAF50; font-weight: 800;"
+                if "Saída" in str(val): return "color: #F44336; font-weight: 800;"
+            return ""
+            
+        if hasattr(df_tooltips, "applymap"):
+            styler = styler.apply(
+                lambda df_vals: df_tooltips.applymap(apply_tooltip_color),
+                axis=None
+            )
+        else:
+            styler = styler.apply(
+                lambda df_vals: df_tooltips.map(apply_tooltip_color),
+                axis=None
+            )
 
     styler = (
         styler.set_table_styles(
