@@ -648,7 +648,8 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
     months = df_metas['Mês'].tolist()
 
     # 1. Filtro Estratégico: Status de Abate
-    df_ready = df[(df['status'] == 'peixe pronto') | (df['peso_medio_g'] >= 900)]
+    status_pronto = df['status'].astype(str).str.strip().str.lower().eq('peixe pronto')
+    df_ready = df[status_pronto]
     
     # 2. Remoção de Duplicatas (Manter apenas o último registro do lote no mês)
     df_ready = df_ready.sort_values('data').drop_duplicates(
@@ -1937,9 +1938,17 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
             try:
                 from datetime import datetime
                 from simulador_aquicola import SAIDA_COLUNAS, formatar_relatorio, salvar_csv
+                from pathlib import Path # Garante que o Path está importado
                 
-                ajustado_dir = Path("d:/mareterra/simulador2/data/output/ajustado")
+                # 1. Encontra a raiz do projeto (volta duas pastas a partir de app/app.py)
+                ROOT_DIR = Path(__file__).resolve().parent.parent
+                
+                # 2. Monta o caminho dinâmico para a pasta de destino
+                ajustado_dir = ROOT_DIR / "data" / "output" / "ajustado"
+                
+                # 3. Cria a pasta caso ela não exista na máquina nova
                 ajustado_dir.mkdir(parents=True, exist_ok=True)
+                
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 save_path = ajustado_dir / f"Relatorio_Gerencial_Ajustado_{timestamp}.csv"
                 
@@ -1955,7 +1964,17 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
                     'consumo de racao acumulado (kg)': 'consumo_racao_acumulado_kg', 'consumo de ração acumulado (kg)': 'consumo_racao_acumulado_kg',
                     'ganho de biomassa acumulado (kg)': 'ganho_biomassa_acumulado_kg', 'mortalidade acumulada (peixes)': 'mortalidade_acumulada_peixes',
                     'mortalidade diaria (peixes)': 'mortalidade_diaria_peixes', 'tanques disponivel': 'tanques_disponivel',
-                    'tanques disponíveis': 'tanques_disponivel', 'tanques liberados': 'tanques_liberados'
+                    'tanques disponíveis': 'tanques_disponivel', 'tanques liberados': 'tanques_liberados',
+                    'custo de racao diario': 'custo_de_racao_diario',
+                    'custo de ração diario': 'custo_de_racao_diario',
+                    'custo de racao acumulado': 'custo_de_racao_acumulado',
+                    'custo de ração acumulado': 'custo_de_racao_acumulado',
+                    'tca diario': 'tca_diario',
+                    'tca acumulado': 'tca_acumulado',
+                    'gdp diario (g/dia)': 'gdp_diario_g_dia',
+                    'gdp acumulado (g)': 'gdp_acumulado_g',
+                    'sobrevivencia diaria (%)': 'sobrevivencia_diaria_pct',
+                    'sobrevivencia acumulada (%)': 'sobrevivencia_acumulada_pct',
                 }
                 
                 lower_to_saida = {col.lower(): col for col in SAIDA_COLUNAS}

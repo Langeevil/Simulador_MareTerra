@@ -131,6 +131,7 @@ ALIASES_PLANTEL = {
 
 ALIASES_CURVAS = {
     "dia": ["dia", "dia ciclo", "dia_ciclo", "dc", "dias", "idade"],
+    "regiao": ["regiao", "região", "localidade", "polo"],
     "estacao": ["estacao", "sazonalidade", "periodo", "epoca"],
     "cluster": [
         "cluster",
@@ -447,6 +448,9 @@ def preparar_curvas(tabela: CsvTable) -> list[Curva]:
     col_dia = encontrar_coluna(
         tabela.headers, ALIASES_CURVAS["dia"], obrigatoria=False, contexto="curvas.csv"
     )
+    col_regiao = encontrar_coluna(
+        tabela.headers, ALIASES_CURVAS["regiao"], obrigatoria=False, contexto="curvas.csv"
+    )
     col_estacao = encontrar_coluna(
         tabela.headers, ALIASES_CURVAS["estacao"], obrigatoria=False, contexto="curvas.csv"
     )
@@ -493,6 +497,7 @@ def preparar_curvas(tabela: CsvTable) -> list[Curva]:
         curvas.append(
             {
                 "dia": int(round(dia)),
+                "regiao": normalizar_nome(row[col_regiao]) if col_regiao else "",
                 "estacao": normalizar_estacao(row[col_estacao]),
                 "cluster": normalizar_cluster(row[col_cluster]) if col_cluster else "",
                 "peso_ref_g": peso,
@@ -761,17 +766,26 @@ def lote_da_linha(
     )
 
 
-def curvas_por_estacao_cluster(curvas: list[Curva], estacao: str, cluster: str = "") -> list[Curva]:
-    subset_estacao = [c for c in curvas if c["estacao"] == estacao] or curvas
+def curvas_por_regiao_estacao_cluster(curvas: list[Curva], regiao: str, estacao: str, cluster: str = "") -> list[Curva]:
+    regiao_norm = normalizar_nome(regiao)
+    
+    # 1. Filtra a região (se não achar a região específica, usa as curvas gerais como fallback)
+    subset_regiao = [c for c in curvas if normalizar_nome(c.get("regiao", "")) == regiao_norm]
+    if not subset_regiao:
+        subset_regiao = curvas
+        
+    # 2. Filtra a estação
+    subset_estacao = [c for c in subset_regiao if c["estacao"] == estacao] or subset_regiao
+    
+    # 3. Filtra o cluster
     cluster_normalizado = normalizar_cluster(cluster) if cluster else ""
     if cluster_normalizado:
         subset_cluster = [
-            c
-            for c in subset_estacao
-            if normalizar_cluster(c.get("cluster", "")) == cluster_normalizado
+            c for c in subset_estacao if normalizar_cluster(c.get("cluster", "")) == cluster_normalizado
         ]
         if subset_cluster:
             return subset_cluster
+            
     return subset_estacao
 
 
@@ -780,18 +794,23 @@ def determinar_dia_ciclo(
     curvas: list[Curva],
     estacao_atual: str,
     cluster: str = "",
+    regiao: str = "",
 ) -> int:
-    subset = curvas_por_estacao_cluster(curvas, estacao_atual, cluster)
+    subset = curvas_por_regiao_estacao_cluster(curvas, regiao, estacao_atual, cluster)
     curva = min(subset, key=lambda c: abs(float(c["peso_ref_g"]) - peso_medio_g))
     return int(curva["dia"])
 
 
-def linha_curva(curvas: list[Curva], estacao: str, dia_ciclo: int, cluster: str = "") -> Curva:
+def linha_curva(curvas: list[Curva], estacao: str, dia_ciclo: int, cluster: str = "", regiao: str = "") -> Curva:
     cache = getattr(linha_curva, "_cache", {})
     cluster_normalizado = normalizar_cluster(cluster) if cluster else ""
-    cache_key = (id(curvas), estacao, cluster_normalizado)
+    regiao_norm = normalizar_nome(regiao)
+    
+    # O cache precisa considerar a região para não misturar APT com ITA
+    cache_key = (id(curvas), regiao_norm, estacao, cluster_normalizado)
+    
     if cache_key not in cache:
-        subset = curvas_por_estacao_cluster(curvas, estacao, cluster_normalizado)
+        subset = curvas_por_regiao_estacao_cluster(curvas, regiao, estacao, cluster_normalizado)
         subset = sorted(subset, key=lambda c: int(c["dia"]))
         cache[cache_key] = ([int(c["dia"]) for c in subset], subset)
         setattr(linha_curva, "_cache", cache)
@@ -842,16 +861,18 @@ def curva_marca_peixe_pronto(curva: Curva) -> bool:
     return normalizar_marcador_status(curva.get("marco", "")) == "Peixe Pronto"
 
 
-def peso_marcador_peixe_pronto(curvas: list[Curva], estacao: str, cluster: str = "") -> float:
+def peso_marcador_peixe_pronto(curvas: list[Curva], estacao: str, cluster: str = "", regiao: str = "") -> float:
     cache = getattr(peso_marcador_peixe_pronto, "_cache", {})
     cluster_normalizado = normalizar_cluster(cluster) if cluster else ""
-    cache_key = (id(curvas), estacao, cluster_normalizado)
+    regiao_norm = normalizar_nome(regiao)
+    cache_key = (id(curvas), regiao_norm, estacao, cluster_normalizado)
+    
     if cache_key in cache:
         return cache[cache_key]
 
     candidatos = [
         float(curva["peso_ref_g"])
-        for curva in curvas_por_estacao_cluster(curvas, estacao, cluster_normalizado)
+        for curva in curvas_por_regiao_estacao_cluster(curvas, regiao, estacao, cluster_normalizado)
         if curva_marca_peixe_pronto(curva)
     ]
     peso = min(candidatos) if candidatos else PESO_DESPESCA_G
@@ -866,19 +887,20 @@ def atingiu_peixe_pronto(
     curvas: list[Curva],
     estacao: str,
     cluster: str = "",
+    regiao: str = "",
 ) -> bool:
     return curva_marca_peixe_pronto(curva) or pm_real >= peso_marcador_peixe_pronto(
-        curvas, estacao, cluster
+        curvas, estacao, cluster, regiao
     )
 
 
-def fator_regional_lote(lote: Lote) -> float:
-    regiao_norm = normalizar_nome(lote.regiao)
-    if "itapora" in regiao_norm or regiao_norm == "ita":
-        return 0.85
-    if "parana" in regiao_norm or regiao_norm == "prn":
-        return 0.85
-    return 1.0
+# def fator_regional_lote(lote: Lote) -> float:
+#     regiao_norm = normalizar_nome(lote.regiao)
+#     if "itapora" in regiao_norm or regiao_norm == "ita":
+#         return 0.85
+#     if "parana" in regiao_norm or regiao_norm == "prn":
+#         return 0.85
+#     return 1.0
 
 
 def adicionar_registro(
@@ -950,7 +972,10 @@ def simular_lote(
     data_relatorio = data_relatorio or date.today()
     data_inicial = lote.data_alojamento
     estacao_atual = detectar_estacao(data_inicial)
-    fator_desempenho = fator_regional_lote(lote) * fator_cluster_lote(lote)
+    
+    # FATOR REGIONAL REMOVIDO: A punição matemática genérica saiu.
+    # Agora apenas o fator tecnológico (cluster) é aplicado aqui.
+    fator_desempenho = fator_cluster_lote(lote)
 
     q = lote.quantidade
     qi = lote.quantidade
@@ -962,8 +987,11 @@ def simular_lote(
 
     ca_kg = 0.0
     mort_acumulada_abs = 0.0
-    dc = determinar_dia_ciclo(pi, curvas, estacao_atual, lote.cluster)
-    curva_inicial = linha_curva(curvas, estacao_atual, dc, lote.cluster)
+    
+    # Busca inicial de curvas já passando lote.regiao
+    dc = determinar_dia_ciclo(pi, curvas, estacao_atual, lote.cluster, lote.regiao)
+    curva_inicial = linha_curva(curvas, estacao_atual, dc, lote.cluster, lote.regiao)
+    
     data_atual = data_inicial
     registros: list[dict[str, object]] = []
     peixe_pronto_no_historico = False
@@ -1000,9 +1028,13 @@ def simular_lote(
 
         estacao = detectar_estacao(data_dia)
         if estacao != estacao_atual:
-            dc = determinar_dia_ciclo(pm_real, curvas, estacao, lote.cluster)
+            # Passando lote.regiao na mudança de estação
+            dc = determinar_dia_ciclo(pm_real, curvas, estacao, lote.cluster, lote.regiao)
             estacao_atual = estacao
-        curva = linha_curva(curvas, estacao, dc, lote.cluster)
+            
+        # Passando lote.regiao na busca da curva do dia
+        curva = linha_curva(curvas, estacao, dc, lote.cluster, lote.regiao)
+        
         pm_relatorio_anterior = pm_relatorio
         bm_anterior_dia = bm_anterior
 
@@ -1017,18 +1049,21 @@ def simular_lote(
             dias_passados = (data_relatorio - data_inicial).days
             if dias_passados > 0:
                 estacao_inicial = detectar_estacao(data_inicial)
-                dc_inicial = determinar_dia_ciclo(pi, curvas, estacao_inicial, lote.cluster)
+                
+                # Inserido lote.regiao nos ajustes
+                dc_inicial = determinar_dia_ciclo(pi, curvas, estacao_inicial, lote.cluster, lote.regiao)
                 dc_alvo = dc_inicial + dias_passados
                 
-                curva_alvo = linha_curva(curvas, estacao_inicial, dc_alvo, lote.cluster)
+                curva_alvo = linha_curva(curvas, estacao_inicial, dc_alvo, lote.cluster, lote.regiao)
                 pm_real = float(curva_alvo["peso_ref_g"]) * FATOR_AJUSTE_PEIXE_PRONTO
                 
                 estacao_atual = detectar_estacao(data_relatorio)
-                dc = determinar_dia_ciclo(pm_real, curvas, estacao_atual, lote.cluster)
+                dc = determinar_dia_ciclo(pm_real, curvas, estacao_atual, lote.cluster, lote.regiao)
                 
             ajuste_aplicado = True
 
-        if atingiu_peixe_pronto(pm_real, curva, curvas, estacao, lote.cluster):
+        # Inserido lote.regiao na verificação do peixe pronto
+        if atingiu_peixe_pronto(pm_real, curva, curvas, estacao, lote.cluster, lote.regiao):
             peixe_pronto_no_historico = True
 
         pm_relatorio = pm_real
@@ -1059,12 +1094,11 @@ def simular_lote(
 
         is_data_relatorio = data_dia == data_relatorio
         
-        # Margens de tolerância apenas para o dia de geração do relatório (resgata marcos que passaram raspando)
+        # Margens de tolerância apenas para o dia de geração do relatório
         exibir_class1 = trigger_class1_hoje or (is_data_relatorio and 28.0 <= pm_relatorio < 32.0)
         exibir_class2 = trigger_class2_hoje or (is_data_relatorio and 148.0 <= pm_relatorio < 152.0)
         exibir_peixe_pronto = trigger_peixe_pronto_hoje or (is_data_relatorio and PESO_DESPESCA_G - 2.0 <= pm_relatorio < PESO_DESPESCA_G + 2.0)
 
-        # Se a margem forçou a exibição no dia do relatório (ex: 149g), garante que a flag seja marcada para não repetir amanhã
         if is_data_relatorio:
             if exibir_class1: class1_disparado = True
             if exibir_class2: class2_disparado = True
@@ -1076,14 +1110,12 @@ def simular_lote(
             semana_num = ((dias_totais - 1) // 7) + 1
             status = definir_status(pm_relatorio, curva, dias_cultivo, data_dia, lote.data_alojamento)
             
-            # Fórmula explícita do GDP Acumulado para rastreabilidade
             ganho_peso_total = pm_relatorio - pi
             gdp_acumulado = ganho_peso_total / dias_cultivo
             
             tanque_liberado_val = ""
             tanque_disponivel_val = ""
 
-            # Só preenche as colunas se o marco ocorreu hoje ou foi resgatado pela tolerância
             if exibir_peixe_pronto:
                 status = "Peixe Pronto"
                 tanque_liberado_val = (data_dia + timedelta(days=1)).strftime("%d/%m/%Y")
@@ -1145,7 +1177,6 @@ def simular_lote(
 
     return registros
 
-
 def simular_todos_lotes(
     plantel: CsvTable,
     tanques: dict[str, dict[str, str]],
@@ -1158,18 +1189,17 @@ def simular_todos_lotes(
     resultados: list[dict] = []
 
     for idx, linha in enumerate(plantel.rows, start=2):
-        try:
+        try: # <--- O CINTO DE SEGURANÇA VOLTOU AQUI
             lote = lote_da_linha(linha, colunas, tanques)
             if lote.quantidade <= 0 or lote.peso_medio_g <= 0:
                 continue
             resultados.extend(simular_lote(lote, curvas, data_relatorio=data_relatorio))
-        except Exception as exc:
+        except Exception as e:
             if mostrar_erros:
-                print(f"Lote ignorado na linha {idx}: {exc}")
-            continue
+                print(f"Erro no tanque da linha {idx}: {e}")
+            continue # Ignora o tanque com defeito e simula o próximo!
 
-    return resultados
-
+    return resultados    
 
 def formatar_numero_saida(valor: object, casas: int) -> str:
     if valor is None:
