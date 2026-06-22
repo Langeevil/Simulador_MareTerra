@@ -38,7 +38,6 @@ from calculos_esperado_realizado import process_esperado_realizado  # type: igno
 from theme_config import PatternName, is_display_numeric_value, normalize_label, style_dark_regional_report
 from theme_consolidado import style_consolidado_dataframe
 from theme_esperado_realizado import style_esperado_realizado_dataframe
-from calculos_peso_override import aplicar_overrides_peso_medio  # type: ignore
 
 calculos_movimentacao = importlib.reload(calculos_movimentacao)
 calcular_saldo_acumulado_consolidado = calculos_movimentacao.calcular_saldo_acumulado_consolidado
@@ -406,7 +405,13 @@ def normalizar_coluna_app(valor: object) -> str:
     return re.sub(r"[^a-z0-9]+", "_", texto).strip("_")
 
 
-METAS_COLUMNS = ["Mês", "Dias Abate APT", "PO Diário APT (kg)", "Dias Abate ITA", "PO Diário ITA (kg)"]
+METAS_COLUMNS = [
+    "Mês",
+    "Dias Abate APT",
+    "PO Diário APT (kg)",
+    "Dias Abate ITA",
+    "PO Diário ITA (kg)",
+]
 TERCEIROS_COLUMNS = ["Região Destino", "Classe", "Produtor", "Mês", "Volume (kg)"]
 TERCEIROS_TRANSFERENCIAS_COLUMNS = [
     "Mês",
@@ -463,7 +468,7 @@ def limpar_origem_terceiros(df: pd.DataFrame) -> pd.DataFrame:
     resultado = df.copy()
     if "Região Origem" not in resultado.columns:
         resultado["Região Origem"] = ""
-    resultado["Região Origem"] = resultado["Região Origem"].fillna("").astype(str).str.strip()
+    resultado["Região Origem"] = resultado["Região Origem"].fillna("").astype(str).str.strip().replace("", "Terceiros")
     return resultado
 
 
@@ -864,7 +869,7 @@ def process_consolidated_data(
     def weighted_avg_weight(region: str) -> dict[str, float]:
         ready = df[
             (df['regiao_calc'] == region)
-            & ((df['status'] == 'peixe pronto') | (df['peso_medio_g'] >= 900))
+            & (df['status'].str.lower() == 'peixe pronto')
         ].sort_values('data').drop_duplicates(
             subset=['produtor', 'tanque', 'mes'],
             keep='last',
@@ -1485,7 +1490,8 @@ def render_management_inputs(
     key_prefix: str = "management",
     save_path: Path | None = None,
     transferencias_save_path: Path | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    peso_medio_df: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
     st.divider()
     title_col, action_col = st.columns([0.74, 0.26])
     with title_col:
@@ -1520,7 +1526,7 @@ def render_management_inputs(
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("#### 1. Metas (PO) e Dias de Abate por Região")
+        st.markdown("#### 1. Metas (PO) e Dias de Abate por Região", help="Defina nesta tabela a meta volumétrica do plano operacional (PO) para abate e o total de dias úteis da indústria no mês. Estes valores servem como balizadores no relatório final para comparar o projetado contra o planejado.")
         df_metas_editado = st.data_editor(
             df_metas_base,
             use_container_width=False,
@@ -1536,7 +1542,7 @@ def render_management_inputs(
         )
 
     with col2:
-        st.markdown("#### 2. Volume de Terceiros e Transferencias")
+        st.markdown("#### 2. Volume de Terceiros e Transferencias", help="Insira volumes que vêm de fora do plantel principal, como compra de peixes de Terceiros, ou registre transferências (entradas e saídas de biomassa). Valores negativos em transferências representam biomassa saindo da região.")
         df_transferencias_editado = st.data_editor(
             df_transferencias_base,
             num_rows="dynamic",
@@ -1553,6 +1559,39 @@ def render_management_inputs(
             key=f"{key_prefix}_terceiros_transferencias_editor_{data_inicio.isoformat()}_{hash(transferencias_bytes)}"
         )
 
+    st.markdown("#### 3. Peso Médio Alvo por Produtor", help="Configure o peso de despesca esperado para cada produtor. O simulador só classificará os lotes como 'Peixe Pronto' quando o peso médio de cultivo ultrapassar o alvo definido aqui para aquele produtor naquele mês.")
+    if peso_medio_df is None or peso_medio_df.empty:
+        peso_medio_df = pd.DataFrame(columns=["Produtor"] + meses)
+    else:
+        for m in meses:
+            if m not in peso_medio_df.columns:
+                peso_medio_df[m] = ""
+        peso_medio_df = peso_medio_df[["Produtor"] + meses]
+        
+    peso_medio_col_config = {
+        "Produtor": produtor_column_config,
+    }
+    for m in meses:
+        peso_medio_col_config[m] = st.column_config.NumberColumn(m, min_value=0, step=50, format="%d g")
+        
+    df_peso_medio_editado = st.data_editor(
+        peso_medio_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        column_config=peso_medio_col_config,
+        key=f"{key_prefix}_peso_medio_editor",
+    )
+    
+    produtores_na_tabela = set(df_peso_medio_editado["Produtor"].dropna().astype(str).str.strip().str.upper())
+    produtores_na_tabela.discard("")
+    produtores_faltantes = [p for p in produtores_editor if p.strip().upper() not in produtores_na_tabela]
+    if produtores_faltantes:
+        st.error(f"Falta definir o Peso Médio Alvo para os produtores: {', '.join(produtores_faltantes)}. A simulação será bloqueada até que todos sejam preenchidos.")
+        st.session_state["bloquear_simulacao"] = True
+    else:
+        st.session_state["bloquear_simulacao"] = False
+
     meses_visiveis = st.multiselect(
         "Meses exibidos no relatório da tela",
         options=meses,
@@ -1566,25 +1605,42 @@ def render_management_inputs(
     df_transferencias_editado = limpar_origem_terceiros(df_transferencias_editado)
     st.session_state["df_metas"] = df_metas_editado.copy()
     st.session_state["df_terceiros"] = df_transferencias_editado.copy()
+    st.session_state["peso_medio_overrides"] = df_peso_medio_editado.copy()
     st.session_state["meses_visiveis"] = list(meses_visiveis)
+    
     parametros_csv = parametros_gerenciais_to_csv(df_metas_editado, pd.DataFrame(columns=TERCEIROS_COLUMNS))
     transferencias_csv = terceiros_e_transferencias_to_csv(df_transferencias_editado)
-    st.download_button(
-        "📥 Baixar parâmetros gerenciais atualizados",
-        data=parametros_csv,
-        file_name=PARAMETROS_FILE,
-        mime="text/csv",
-        use_container_width=True,
-        key=f"{key_prefix}_download_parametros_gerenciais",
-    )
-    st.download_button(
-        "📥 Baixar terceiros e transferências atualizados",
-        data=transferencias_csv,
-        file_name=TERCEIROS_TRANSFERENCIAS_FILE,
-        mime="text/csv",
-        use_container_width=True,
-        key=f"{key_prefix}_download_terceiros_transferencias",
-    )
+    peso_medio_csv = peso_medio_overrides_to_csv(df_peso_medio_editado, meses)
+    
+    dl_c1, dl_c2, dl_c3 = st.columns(3)
+    with dl_c1:
+        st.download_button(
+            "📥 Baixar parâmetros gerenciais",
+            data=parametros_csv,
+            file_name=PARAMETROS_FILE,
+            mime="text/csv",
+            use_container_width=True,
+            key=f"{key_prefix}_download_parametros_gerenciais",
+        )
+    with dl_c2:
+        st.download_button(
+            "📥 Baixar terceiros e transferências",
+            data=transferencias_csv,
+            file_name=TERCEIROS_TRANSFERENCIAS_FILE,
+            mime="text/csv",
+            use_container_width=True,
+            key=f"{key_prefix}_download_terceiros",
+        )
+    with dl_c3:
+        st.download_button(
+            "📥 Baixar peso médio dos produtores",
+            data=peso_medio_csv,
+            file_name="peso_medio_produtor.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key=f"{key_prefix}_download_peso_medio",
+        )
+
     if save_path is not None:
         with save_action_slot.container():
             salvar_parametros = st.button(
@@ -1611,18 +1667,23 @@ def render_management_inputs(
             if transferencias_save_path is not None:
                 transferencias_save_path.parent.mkdir(parents=True, exist_ok=True)
                 transferencias_save_path.write_bytes(transferencias_csv)
+            peso_medio_save_path = save_path.parent / "peso_medio_produtor.csv"
+            peso_medio_save_path.write_bytes(peso_medio_csv)
+
             st.session_state["df_metas"] = df_metas_editado.copy()
             st.session_state["df_terceiros"] = df_transferencias_editado.copy()
+            st.session_state["peso_medio_overrides"] = df_peso_medio_editado.copy()
             st.session_state["meses_visiveis"] = list(meses_visiveis)
             st.session_state[f"{key_prefix}_parametros_file_mtime_ns"] = save_path.stat().st_mtime_ns
             st.session_state[f"{key_prefix}_parametros_override_bytes"] = parametros_csv
             if transferencias_save_path is not None:
                 st.session_state[f"{key_prefix}_transferencias_file_mtime_ns"] = transferencias_save_path.stat().st_mtime_ns
             st.session_state[f"{key_prefix}_transferencias_override_bytes"] = transferencias_csv
+            st.session_state[f"{key_prefix}_peso_medio_file_mtime_ns"] = peso_medio_save_path.stat().st_mtime_ns
             st.session_state[saved_toast_key] = True
             st.rerun()
 
-    return df_metas_editado, df_transferencias_editado, meses_visiveis
+    return df_metas_editado, df_transferencias_editado, df_peso_medio_editado, meses_visiveis
 
 
 def render_validated_management_inputs(
@@ -1633,7 +1694,8 @@ def render_validated_management_inputs(
     key_prefix: str,
     save_path: Path | None = None,
     transferencias_save_path: Path | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, list[str]] | None:
+    peso_medio_df: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]] | None:
     if parametros_bytes is None or transferencias_bytes is None:
         return None
 
@@ -1647,6 +1709,7 @@ def render_validated_management_inputs(
             key_prefix=key_prefix,
             save_path=save_path,
             transferencias_save_path=transferencias_save_path,
+            peso_medio_df=peso_medio_df,
         )
     except ValueError as exc:
         st.error(f"parametros_gerenciais.csv invalido: {exc}")
@@ -1727,10 +1790,12 @@ def curvas_cluster_dataframe_from_path(path: Path) -> pd.DataFrame:
     rows = []
     for curva in curvas:
         cluster = str(curva.get("cluster", "") or "Curva padrão").strip() or "Curva padrão"
+        reg = str(curva.get("regiao", "")).strip().upper()
         rows.append(
             {
                 "Dia": int(curva["dia"]),
                 "Tipo de Curva": "Verão" if curva["estacao"] == "V" else "Inverno",
+                "Região": reg,
                 "Cluster": cluster,
                 "Peso Médio (g)": float(curva["peso_ref_g"]),
                 "GDP (g/dia)": float(curva["gdp_g"]),
@@ -1744,7 +1809,7 @@ def curvas_cluster_dataframe_from_path(path: Path) -> pd.DataFrame:
     ordem_tipo_curva = {"Inverno": 0, "Verão": 1}
     curvas_df["_ordem_tipo_curva"] = curvas_df["Tipo de Curva"].map(ordem_tipo_curva).fillna(2)
     return (
-        curvas_df.sort_values(["Dia", "_ordem_tipo_curva", "Cluster"])
+        curvas_df.sort_values(["Dia", "_ordem_tipo_curva", "Região", "Cluster"])
         .drop(columns="_ordem_tipo_curva")
         .reset_index(drop=True)
     )
@@ -1765,7 +1830,7 @@ def render_curve_programs_preview(curvas_df: pd.DataFrame) -> None:
         display_df = curvas_df.copy()
         display_df["_ordem_tipo_curva"] = display_df["Tipo de Curva"].map({"Inverno": 0, "Verão": 1}).fillna(2)
         display_df = (
-            display_df.sort_values(["Dia", "_ordem_tipo_curva", "Cluster"])
+            display_df.sort_values(["Dia", "_ordem_tipo_curva", "Região", "Cluster"])
             .drop(columns="_ordem_tipo_curva")
             .reset_index(drop=True)
         )
@@ -1781,98 +1846,6 @@ def render_curve_programs_preview(curvas_df: pd.DataFrame) -> None:
 # ==========================================
 # GERAÇÃO DO DASHBOARD E INTERFACE PRINCIPAL
 # ==========================================
-
-def render_unified_peso_medio_editor(df_base: pd.DataFrame, df_metas: pd.DataFrame) -> None:
-    st.markdown("---")
-    with st.expander("🎯 Painel Central: Forçar Pesos Médios e Antecipar Abates", expanded=False):
-        st.caption("Adicione produtores à lista e edite os pesos para simular cenários em todas as abas. Deixe em branco para usar o original.")
-        
-        produtores_por_regiao = {
-            "APT": sorted(df_base[df_base['regiao_calc'] == "APT"]['produtor'].unique()),
-            "ITA": sorted(df_base[df_base['regiao_calc'] == "ITA"]['produtor'].unique())
-        }
-        meses = df_metas['Mês'].tolist() if df_metas is not None and 'Mês' in df_metas.columns else sorted(df_base['mes'].unique())
-        
-        # Sincroniza a tabela inicial com as overrides já salvas
-        if "unified_editor_rows" not in st.session_state:
-            rows = []
-            base = st.session_state.get("peso_medio_overrides", {"APT": {}, "ITA": {}})
-            for reg, prods in base.items():
-                for p, m_vals in prods.items():
-                    if not m_vals: continue
-                    row = {"Região": reg, "Produtor": p}
-                    for m in meses:
-                        val = m_vals.get(m, 0.0)
-                        row[m] = float(val) if val else None
-                    rows.append(row)
-            st.session_state["unified_editor_rows"] = rows
-            
-        st.markdown("##### 1. Adicionar Produtor para Ajuste")
-        c1, c2, c3 = st.columns([2, 3, 2])
-        with c1:
-            sel_regiao = st.selectbox("Região", ["APT", "ITA"], key="sel_regiao_add")
-        with c2:
-            opcoes_produtor = produtores_por_regiao.get(sel_regiao, [])
-            sel_produtor = st.selectbox("Produtor", opcoes_produtor, key="sel_produtor_add")
-        with c3:
-            st.write("") # spacer
-            if st.button("➕ Adicionar à Tabela", use_container_width=True):
-                if sel_produtor:
-                    exists = any(r.get("Região") == sel_regiao and r.get("Produtor") == sel_produtor for r in st.session_state["unified_editor_rows"])
-                    if not exists:
-                        new_row = {"Região": sel_regiao, "Produtor": sel_produtor}
-                        for m in meses:
-                            new_row[m] = None
-                        st.session_state["unified_editor_rows"].append(new_row)
-                        st.rerun()
-                        
-        st.markdown("##### 2. Tabela de Overrides (Edição de Pesos)")
-        if not st.session_state["unified_editor_rows"]:
-            st.info("Nenhum ajuste ativo. Use a barra acima para adicionar um produtor à lista.")
-        else:
-            df_editor = pd.DataFrame(st.session_state["unified_editor_rows"])
-            
-            col_config = {
-                "Região": st.column_config.TextColumn("Região", disabled=True),
-                "Produtor": st.column_config.TextColumn("Produtor", disabled=True),
-            }
-            for m in meses:
-                col_config[m] = st.column_config.NumberColumn(m, min_value=0.0, max_value=10000.0, step=50.0, format="%g g")
-                # col_config[m] = st.column_config.NumberColumn(m, min_value=0.0, max_value=500000.0, step=50.0, format="%g g")
-                
-            edited_df = st.data_editor(
-                df_editor,
-                hide_index=True,
-                column_config=col_config,
-                use_container_width=True,
-                key="editor_peso_unified"
-            )
-            
-            col1, col2 = st.columns([1, 4])
-            with col1:
-                if st.button("💾 Salvar Histórico", type="primary", use_container_width=True):
-                    # Save to persistent state and trigger CSV creation
-                    new_overrides = {"APT": {}, "ITA": {}}
-                    for _, row in edited_df.iterrows():
-                        r_reg = row["Região"]
-                        r_prod = row["Produtor"]
-                        for m in meses:
-                            val = row[m]
-                            if pd.notna(val) and float(val) > 0:
-                                if r_prod not in new_overrides[r_reg]:
-                                    new_overrides[r_reg][r_prod] = {}
-                                new_overrides[r_reg][r_prod][m] = float(val)
-                    
-                    st.session_state["peso_medio_overrides"] = new_overrides
-                    st.session_state["unified_editor_rows"] = edited_df.to_dict("records")
-                    st.session_state["trigger_save_ajustado"] = True
-                    st.rerun()
-            with col2:
-                if st.button("Limpar Todos os Ajustes"):
-                    st.session_state["peso_medio_overrides"] = {"APT": {}, "ITA": {}}
-                    st.session_state["unified_editor_rows"] = []
-                    st.session_state.pop("editor_peso_unified", None)
-                    st.rerun()
 
 
 def render_excel_style_view(csv_bytes: bytes) -> None:
@@ -1899,111 +1872,6 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
         if df_base.empty:
             st.error("Falha ao analisar a base de dados. Verifique a estrutura do CSV gerado.")
             return
-            
-        # Extract live edits from data_editor state so it updates automatically
-        base_overrides = st.session_state.get("peso_medio_overrides", {"APT": {}, "ITA": {}})
-        import copy
-        live_overrides = copy.deepcopy(base_overrides)
-        
-        editor_state = st.session_state.get("editor_peso_unified")
-        if editor_state and "edited_rows" in editor_state:
-            base_rows = st.session_state.get("unified_editor_rows", [])
-            for row_idx_str, edits in editor_state["edited_rows"].items():
-                try:
-                    row_idx = int(row_idx_str)
-                except ValueError:
-                    continue
-                if row_idx < len(base_rows):
-                    r_reg = base_rows[row_idx].get("Região")
-                    r_prod = base_rows[row_idx].get("Produtor")
-                    if not r_reg or not r_prod:
-                        continue
-                    if r_prod not in live_overrides.get(r_reg, {}):
-                        if r_reg not in live_overrides: live_overrides[r_reg] = {}
-                        live_overrides[r_reg][r_prod] = {}
-                    
-                    for col_name, val in edits.items():
-                        if val is not None and float(val) > 0:
-                            live_overrides[r_reg][r_prod][col_name] = float(val)
-                        else:
-                            live_overrides[r_reg][r_prod].pop(col_name, None)
-
-        # Apply live overrides to see changes immediately
-        df_base = aplicar_overrides_peso_medio(df_base, live_overrides)
-        
-        # Salva o live_overrides no session_state para o botão Salvar poder acessar facilmente
-        st.session_state["live_peso_medio_overrides"] = live_overrides
-        
-        if st.session_state.pop("trigger_save_ajustado", False):
-            try:
-                from datetime import datetime
-                from simulador_aquicola import SAIDA_COLUNAS, formatar_relatorio, salvar_csv
-                from pathlib import Path # Garante que o Path está importado
-                
-                # 1. Encontra a raiz do projeto (volta duas pastas a partir de app/app.py)
-                ROOT_DIR = Path(__file__).resolve().parent.parent
-                
-                # 2. Monta o caminho dinâmico para a pasta de destino
-                ajustado_dir = ROOT_DIR / "data" / "output" / "ajustado"
-                
-                # 3. Cria a pasta caso ela não exista na máquina nova
-                ajustado_dir.mkdir(parents=True, exist_ok=True)
-                
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                save_path = ajustado_dir / f"Relatorio_Gerencial_Ajustado_{timestamp}.csv"
-                
-                export_df = df_base.copy()
-                
-                # Mapeamento reverso para restaurar as colunas originais do SAIDA_COLUNAS
-                col_mapping = {
-                    'região': 'regiao', 'peso médio (g)': 'peso_medio_g', 'peso medio (g)': 'peso_medio_g',
-                    'biomassa (kg)': 'biomassa_kg', 'biomassa': 'biomassa_kg', 'fase nutricional': 'fase_nutricional',
-                    'status': 'status', 'produtor': 'produtor', 'tanque': 'tanque', 'classe': 'classe', 'data': 'data',
-                    'consumo de racao diario (kg)': 'consumo_racao_diario_kg', 'consumo de ração diario (kg)': 'consumo_racao_diario_kg',
-                    'consumo de racao na fase (kg)': 'consumo_racao_na_fase_kg', 'consumo de ração na fase (kg)': 'consumo_racao_na_fase_kg',
-                    'consumo de racao acumulado (kg)': 'consumo_racao_acumulado_kg', 'consumo de ração acumulado (kg)': 'consumo_racao_acumulado_kg',
-                    'ganho de biomassa acumulado (kg)': 'ganho_biomassa_acumulado_kg', 'mortalidade acumulada (peixes)': 'mortalidade_acumulada_peixes',
-                    'mortalidade diaria (peixes)': 'mortalidade_diaria_peixes', 'tanques disponivel': 'tanques_disponivel',
-                    'tanques disponíveis': 'tanques_disponivel', 'tanques liberados': 'tanques_liberados',
-                    'custo de racao diario': 'custo_de_racao_diario',
-                    'custo de ração diario': 'custo_de_racao_diario',
-                    'custo de racao acumulado': 'custo_de_racao_acumulado',
-                    'custo de ração acumulado': 'custo_de_racao_acumulado',
-                    'tca diario': 'tca_diario',
-                    'tca acumulado': 'tca_acumulado',
-                    'gdp diario (g/dia)': 'gdp_diario_g_dia',
-                    'gdp acumulado (g)': 'gdp_acumulado_g',
-                    'sobrevivencia diaria (%)': 'sobrevivencia_diaria_pct',
-                    'sobrevivencia acumulada (%)': 'sobrevivencia_acumulada_pct',
-                }
-                
-                lower_to_saida = {col.lower(): col for col in SAIDA_COLUNAS}
-                for orig, mapped in col_mapping.items():
-                    for sc in SAIDA_COLUNAS:
-                        if sc.lower() == orig:
-                            lower_to_saida[mapped] = sc
-                            
-                export_df = export_df.rename(columns=lower_to_saida)
-                
-                # Mantém apenas as colunas do simulador original na ordem correta
-                cols_to_keep = [c for c in SAIDA_COLUNAS if c in export_df.columns]
-                export_df = export_df[cols_to_keep]
-                
-                # Converte data para objeto python date para o formatador
-                if 'Data' in export_df.columns:
-                    export_df['Data'] = pd.to_datetime(export_df['Data']).dt.date
-                    
-                # Substitui NaNs por strings vazias para que o Status não fique com "nan"
-                export_df = export_df.fillna("")
-                
-                # Exporta usando a MESMA formatação string do simulador original
-                registros = export_df.to_dict(orient="records")
-                registros_formatados = formatar_relatorio(registros)
-                salvar_csv(save_path, registros_formatados)
-                
-                st.toast(f"Relatório salvo em data/output/ajustado! ({save_path.name})", icon="✅")
-            except Exception as e:
-                st.error(f"Erro ao salvar arquivo ajustado: {e}")
 
         df_apt_raw, tooltip_apt_raw = process_regional_data(df_base, "APT", df_metas, df_terceiros)
         df_ita_raw, tooltip_ita_raw = process_regional_data(df_base, "ITA", df_metas, df_terceiros)
@@ -2029,8 +1897,7 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
             use_container_width=True,
         )
         
-    # Renderiza o Painel Único de Overrides antes das abas
-    render_unified_peso_medio_editor(df_base, df_metas)
+    # (Painel unificado removido conforme solicitado na Etapa 1)
     
     tab_apt, tab_ita, tab_consolidado, tab_esperado_realizado = st.tabs(
         ["🏭 APT (Aparecida do Taboado)", "🏭 ITA (Itaporã)", "📊 Consolidado APT + ITA", "🎯 Esperado x Realizado"]
@@ -2199,7 +2066,42 @@ def run_simulation(config: SimulationConfig) -> tuple[Path, str]:
         output_path = executar(args)
     return Path(output_path), stdout_buffer.getvalue().strip()
 
+
+def carregar_peso_medio_overrides_de_caminho(caminho: Path) -> pd.DataFrame:
+    if not caminho.exists():
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(caminho, sep=";", encoding="utf-8-sig", dtype=str).fillna("")
+        if "Produtor" not in df.columns:
+            return pd.DataFrame()
+        return df
+    except Exception as e:
+        st.warning(f"Erro ao ler peso_medio_produtor.csv: {e}")
+        return pd.DataFrame()
+
+
+def peso_medio_overrides_to_csv(df_peso: pd.DataFrame, meses: list[str]) -> bytes:
+    if df_peso is None or df_peso.empty:
+        df = pd.DataFrame(columns=["Produtor"] + list(meses))
+    else:
+        df = df_peso.copy()
+        for m in meses:
+            if m not in df.columns:
+                df[m] = ""
+            else:
+                df[m] = df[m].apply(csv_numero_or_blank)
+        df = df[["Produtor"] + list(meses)]
+        
+    buffer = io.StringIO()
+    df.to_csv(buffer, sep=';', index=False, encoding='utf-8-sig')
+    return buffer.getvalue().encode('utf-8-sig')
+
+
 def main() -> None:
+    if "peso_medio_overrides" not in st.session_state:
+        default_path = RUNTIME_DIR / "data" / "input" / "peso_medio_produtor.csv"
+        st.session_state["peso_medio_overrides"] = carregar_peso_medio_overrides_de_caminho(default_path)
+
     configure_page()
     render_header()
 
@@ -2213,11 +2115,11 @@ def main() -> None:
     with tab_upload:
         col1, col2 = st.columns(2)
         with col1:
-            uploaded_files["plantel"] = st.file_uploader("plantel.csv", type=["csv"], key="u_plantel")
-            uploaded_files["curvas"] = st.file_uploader("curvas.csv", type=["csv"], key="u_curvas")
+            uploaded_files["plantel"] = st.file_uploader("plantel.csv", type=["csv"], key="u_plantel", help="Arquivo base contendo o inventário atual de lotes alojados na fazenda.")
+            uploaded_files["curvas"] = st.file_uploader("curvas.csv", type=["csv"], key="u_curvas", help="Tabelas de crescimento esperado, conversão alimentar e sobrevivência.")
         with col2:
-            uploaded_files["tanques"] = st.file_uploader("tanques.csv", type=["csv"], key="u_tanques")
-            uploaded_files["racao"] = st.file_uploader("racao.csv", type=["csv"], key="u_racao")
+            uploaded_files["tanques"] = st.file_uploader("tanques.csv", type=["csv"], key="u_tanques", help="Relação de todos os tanques físicos, suas áreas e volumes disponíveis.")
+            uploaded_files["racao"] = st.file_uploader("racao.csv", type=["csv"], key="u_racao", help="Cadastro de tipos de ração e seus custos unitários atualizados.")
         uploaded_files["parametros_gerenciais"] = st.file_uploader(
             "parametros_gerenciais.csv",
             type=["csv"],
@@ -2265,6 +2167,7 @@ def main() -> None:
             key_prefix="upload",
             save_path=RUNTIME_DIR / "data" / "input" / PARAMETROS_FILE,
             transferencias_save_path=RUNTIME_DIR / "data" / "input" / TERCEIROS_TRANSFERENCIAS_FILE,
+            peso_medio_df=st.session_state.get("peso_medio_overrides"),
         )
 
         if uploaded_files.get("curvas") is not None:
@@ -2276,15 +2179,15 @@ def main() -> None:
                 st.info(f"Não foi possível montar o comparativo de curvas: {exc}")
             
         missing = [f for k, f in REQUIRED_FILES.items() if uploaded_files.get(k) is None]
-        if missing or management_state is None:
+        if missing or management_state is None or st.session_state.get("bloquear_simulacao", False):
             if management_state is None and not missing:
                 missing.append(PARAMETROS_FILE)
-            st.warning("Envie todos os arquivos obrigatórios: " + ", ".join(missing))
+            st.warning("Envie todos os arquivos obrigatórios e preencha as metas de peso médio para todos os produtores.")
             st.button("🚀 Executar Simulação", disabled=True, key="btn_up_disabled")
         else:
             if st.button("🚀 Executar Simulação", type="primary", key="btn_up_run"):
                 try:
-                    df_metas, df_terceiros, meses_visiveis = management_state
+                    df_metas, df_terceiros, df_peso_medio, meses_visiveis = management_state
                     with tempfile.TemporaryDirectory() as temp_dir:
                         work_dir = Path(temp_dir)
                         for key, file_name in REQUIRED_FILES.items():
@@ -2298,6 +2201,11 @@ def main() -> None:
                                 )
                             else:
                                 (work_dir / file_name).write_bytes(uploaded_files[key].getbuffer())
+                        
+                        if df_peso_medio is not None:
+                            (work_dir / "peso_medio_produtor.csv").write_bytes(
+                                peso_medio_overrides_to_csv(df_peso_medio, meses_visiveis or df_metas["Mês"].tolist())
+                            )
                             
                         config = SimulationConfig(
                             input_dir=work_dir, plantel=REQUIRED_FILES["plantel"],
@@ -2323,6 +2231,13 @@ def main() -> None:
         st.caption("Modo desenvolvedor: leitura direta do diretório local.")
         raw_input_dir = Path(st.text_input("Pasta 'input'", value=r".\data\input")).expanduser()
         input_dir = raw_input_dir if raw_input_dir.is_absolute() else RUNTIME_DIR / raw_input_dir
+        if "loaded_input_dir" not in st.session_state or st.session_state["loaded_input_dir"] != input_dir:
+            st.session_state["loaded_input_dir"] = input_dir
+            local_peso_medio_path = input_dir / "peso_medio_produtor.csv"
+            if local_peso_medio_path.exists():
+                st.session_state["peso_medio_overrides"] = carregar_peso_medio_overrides_de_caminho(local_peso_medio_path)
+                st.session_state.pop("unified_editor_rows", None)
+
         missing_local = [
             file_name for file_name in REQUIRED_FILES.values() if not (input_dir / file_name).exists()
         ]
@@ -2344,6 +2259,7 @@ def main() -> None:
                 key_prefix="local",
                 save_path=parametros_local,
                 transferencias_save_path=transferencias_local,
+                peso_medio_df=st.session_state.get("peso_medio_overrides"),
             )
         else:
             arquivos_ausentes = [
@@ -2359,12 +2275,14 @@ def main() -> None:
             except Exception as exc:
                 st.info(f"Não foi possível montar o comparativo de curvas local: {exc}")
         
-        if missing_local or management_state is None:
+        if missing_local or management_state is None or st.session_state.get("bloquear_simulacao", False):
             if missing_local:
                 st.warning("Arquivos locais obrigatorios ausentes: " + ", ".join(missing_local))
+            else:
+                st.warning("Preencha as metas de peso médio para todos os produtores.")
             st.button("🚀 Executar Simulação Local", disabled=True, key="btn_local_disabled")
         elif st.button("🚀 Executar Simulação Local", type="primary", key="btn_local_run"):
-            df_metas, df_terceiros, meses_visiveis = management_state
+            df_metas, df_terceiros, df_peso_medio, meses_visiveis = management_state
             config = SimulationConfig(
                 input_dir=input_dir, plantel=REQUIRED_FILES["plantel"],
                 tanques=REQUIRED_FILES["tanques"], curvas=REQUIRED_FILES["curvas"],
@@ -2382,6 +2300,11 @@ def main() -> None:
                 (input_dir / TERCEIROS_TRANSFERENCIAS_FILE).write_bytes(
                     terceiros_e_transferencias_to_csv(df_terceiros)
                 )
+                if df_peso_medio is not None:
+                    (input_dir / "peso_medio_produtor.csv").write_bytes(
+                        peso_medio_overrides_to_csv(df_peso_medio, meses_visiveis or df_metas["Mês"].tolist())
+                    )
+
                 with st.spinner("Motor de Cálculo em Execução..."):
                     out_path, stdout = run_simulation(config)
                 st.session_state["df_metas"] = df_metas

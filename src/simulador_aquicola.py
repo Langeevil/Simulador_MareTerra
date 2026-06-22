@@ -16,7 +16,6 @@ import numpy as np
 import pandas as pd
 
 
-PESO_DESPESCA_G = 900.0
 LIMITE_DIAS = 730
 FATOR_AJUSTE_PEIXE_PRONTO = 0.84
 MARCADOR_PEIXE_PRONTO = "pronto"
@@ -375,11 +374,6 @@ def fator_cluster_lote(lote: Lote) -> float:
         return 0.92
     return 1.0
 
-
-def definir_status_base(peso_medio_g: float) -> str:
-    if peso_medio_g >= PESO_DESPESCA_G:
-        return "Peixe Pronto"
-    return ""
 
 
 def carregar_csv(caminho: Path) -> CsvTable:
@@ -835,14 +829,105 @@ def normalizar_marcador_status(valor: object) -> str:
     return ""
 
 
-def definir_status(peso_medio_g: float, curva: Curva | None = None, dias_cultivo: int | None = None, data_atual: date | None = None, dt_ult_biometria: date | None = None) -> str:
+def carregar_peso_medio_produtor(caminho: Path) -> dict[str, dict[str, float]]:
+    """Carrega o arquivo peso_medio_produtor.csv, mapeando Produtor -> Mes -> Peso."""
+    overrides = {}
+    if not caminho.exists():
+        return overrides
+    try:
+        with caminho.open("r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f, delimiter=";")
+            headers = reader.fieldnames or []
+            if "Produtor" not in headers:
+                return overrides
+            for row in reader:
+                prod = normalizar_nome(row["Produtor"])
+                if not prod:
+                    continue
+                if prod not in overrides:
+                    overrides[prod] = {}
+                for col in headers:
+                    if col != "Produtor":
+                        val = row[col]
+                        try:
+                            val_float = float(val) if isinstance(val, (int, float)) else float(str(val).replace(",", "."))
+                            if val_float > 0:
+                                overrides[prod][col] = val_float
+                        except (ValueError, TypeError):
+                            pass
+    except Exception as e:
+        print(f"Erro ao ler peso_medio_produtor.csv: {e}")
+    return overrides
+
+
+def obter_peso_medio_alvo_lote(
+    overrides: dict[str, dict[str, float]] | None,
+    produtor: str,
+    data_atual: date,
+) -> float:
+    """
+    Busca a meta de peso para o lote. Se o mês atual não tiver meta, 
+    busca a última meta definida no passado (efeito memória). Se o peixe 
+    antecipar a despesca, busca a primeira meta futura.
+    """
+    prod_norm = normalizar_nome(produtor)
+    
+    if not overrides or prod_norm not in overrides:
+        raise ValueError(f"Peso médio alvo não definido para o produtor {produtor}.")
+
+    metas = overrides[prod_norm]
+    
+    # 1. Tenta encontrar a meta exata preenchida no mês atual
+    # Suporta tanto o formato "2026-06" quanto "06/2026"
+    mes_iso = data_atual.strftime("%Y-%m")
+    mes_br = data_atual.strftime("%m/%Y")
+    
+    if mes_iso in metas: return float(metas[mes_iso])
+    if mes_br in metas: return float(metas[mes_br])
+    
+    # 2. Se o mês atual está vazio, extraímos as datas para procurar para trás ou para frente
+    metas_com_data = []
+    for col, peso in metas.items():
+        try:
+            if "-" in col: 
+                dt = datetime.strptime(col, "%Y-%m").date()
+            elif "/" in col: 
+                dt = datetime.strptime(col, "%m/%Y").date()
+            else: 
+                continue
+            metas_com_data.append((dt, float(peso)))
+        except ValueError:
+            continue
+            
+    if not metas_com_data:
+        # Fallback: Se os cabeçalhos não forem datas, pega o primeiro peso que achar
+        return float(next(iter(metas.values())))
+        
+    # Ordena as metas cronologicamente
+    metas_com_data.sort(key=lambda x: x[0])
+    
+    # 3. Busca a meta mais recente que seja MENOR ou IGUAL à data atual (memória do passado)
+    meta_vigente = None
+    for dt, peso in metas_com_data:
+        if (dt.year, dt.month) <= (data_atual.year, data_atual.month):
+            meta_vigente = peso
+            
+    if meta_vigente is not None:
+        return meta_vigente
+        
+    # 4. Se a data atual for ANTES da primeira meta definida (ex: peixe cresceu rápido e já 
+    # atingiu o peso em maio, mas a meta tava em junho), puxa a primeira meta do futuro.
+    return metas_com_data[0][1]
+
+
+def definir_status(peso_medio_g: float, peso_medio_alvo: float, curva: Curva | None = None, dias_cultivo: int | None = None, data_atual: date | None = None, dt_ult_biometria: date | None = None) -> str:
     peso_medio_g = round(float(peso_medio_g), 2)
     
     # A primeira linha da projeção de cada tanque é sempre considerada a biometria inicial
     if dias_cultivo == 0:
         return "Biometria"
         
-    if peso_medio_g >= PESO_DESPESCA_G:
+    if peso_medio_g >= peso_medio_alvo:
         return "Peixe Pronto"
     if curva is None:
         return ""
@@ -857,41 +942,11 @@ def definir_status(peso_medio_g: float, curva: Curva | None = None, dias_cultivo
     return ""
 
 
-def curva_marca_peixe_pronto(curva: Curva) -> bool:
-    return normalizar_marcador_status(curva.get("marco", "")) == "Peixe Pronto"
-
-
-def peso_marcador_peixe_pronto(curvas: list[Curva], estacao: str, cluster: str = "", regiao: str = "") -> float:
-    cache = getattr(peso_marcador_peixe_pronto, "_cache", {})
-    cluster_normalizado = normalizar_cluster(cluster) if cluster else ""
-    regiao_norm = normalizar_nome(regiao)
-    cache_key = (id(curvas), regiao_norm, estacao, cluster_normalizado)
-    
-    if cache_key in cache:
-        return cache[cache_key]
-
-    candidatos = [
-        float(curva["peso_ref_g"])
-        for curva in curvas_por_regiao_estacao_cluster(curvas, regiao, estacao, cluster_normalizado)
-        if curva_marca_peixe_pronto(curva)
-    ]
-    peso = min(candidatos) if candidatos else PESO_DESPESCA_G
-    cache[cache_key] = peso
-    setattr(peso_marcador_peixe_pronto, "_cache", cache)
-    return peso
-
-
 def atingiu_peixe_pronto(
     pm_real: float,
-    curva: Curva,
-    curvas: list[Curva],
-    estacao: str,
-    cluster: str = "",
-    regiao: str = "",
+    peso_medio_alvo: float,
 ) -> bool:
-    return curva_marca_peixe_pronto(curva) or pm_real >= peso_marcador_peixe_pronto(
-        curvas, estacao, cluster, regiao
-    )
+    return pm_real >= peso_medio_alvo
 
 
 # def fator_regional_lote(lote: Lote) -> float:
@@ -965,6 +1020,7 @@ def simular_lote(
     curvas: list[Curva],
     limite_dias: int = LIMITE_DIAS,
     data_relatorio: date | None = None,
+    overrides_peso: dict | None = None,
 ) -> list[dict]:
     if lote.quantidade <= 0 or lote.peso_medio_g <= 0:
         return []
@@ -996,6 +1052,7 @@ def simular_lote(
     registros: list[dict[str, object]] = []
     peixe_pronto_no_historico = False
     data_liberacao: date | None = None
+    alvo_atingido: float | None = None
     class1_disparado = pi >= 30.0
     class2_disparado = pi >= 150.0
 
@@ -1015,7 +1072,7 @@ def simular_lote(
         0.0,
         0.0,
         0.0,
-        definir_status(pi, curva_inicial, 0, data_inicial, lote.data_alojamento),
+        definir_status(pi, 0.0, curva_inicial, 0, data_inicial, lote.data_alojamento),
         "",
         "",
         0.0,
@@ -1023,8 +1080,10 @@ def simular_lote(
 
     def simular_um_dia(data_dia: date, registrar: bool) -> None:
         nonlocal q, pm_real, pm_relatorio, bm_anterior, ca_kg
-        nonlocal mort_acumulada_abs, dc, peixe_pronto_no_historico, estacao_atual, data_liberacao
+        nonlocal mort_acumulada_abs, dc, peixe_pronto_no_historico, estacao_atual, data_liberacao, alvo_atingido
         nonlocal class1_disparado, class2_disparado
+
+        peso_medio_alvo = obter_peso_medio_alvo_lote(overrides_peso, lote.produtor, data_dia)
 
         estacao = detectar_estacao(data_dia)
         if estacao != estacao_atual:
@@ -1038,7 +1097,7 @@ def simular_lote(
         pm_relatorio_anterior = pm_relatorio
         bm_anterior_dia = bm_anterior
 
-        mortos_dia = q * (float(curva["mortalidade_pct"]) / 100.0)
+        mortos_dia = q * float(curva["mortalidade_pct"])
         q = max(q - mortos_dia, 0.0)
         mort_acumulada_abs += mortos_dia
 
@@ -1062,8 +1121,7 @@ def simular_lote(
                 
             ajuste_aplicado = True
 
-        # Inserido lote.regiao na verificação do peixe pronto
-        if atingiu_peixe_pronto(pm_real, curva, curvas, estacao, lote.cluster, lote.regiao):
+        if atingiu_peixe_pronto(pm_real, peso_medio_alvo):
             peixe_pronto_no_historico = True
 
         pm_relatorio = pm_real
@@ -1078,11 +1136,16 @@ def simular_lote(
         gdp_diario = 0.0 if ajuste_aplicado else pm_relatorio - pm_relatorio_anterior
         tca_diario = 0.0 if ajuste_aplicado or ganho_bm_dia <= 0 else racao_dia_kg / ganho_bm_dia
         tca_ac = ca_kg / ganho_bm_total if ganho_bm_total > 0 else 0.0
+        # Verifica se o peso caiu abaixo do alvo atingido (devido a ajuste de biometria)
+        if data_liberacao is not None and alvo_atingido is not None:
+            if pm_relatorio < alvo_atingido:
+                data_liberacao = None
+                alvo_atingido = None
 
         # Verifica se os marcos foram atingidos neste exato dia
         trigger_class1_hoje = not class1_disparado and pm_relatorio >= 30.0
         trigger_class2_hoje = not class2_disparado and pm_relatorio >= 150.0
-        trigger_peixe_pronto_hoje = data_liberacao is None and pm_relatorio >= PESO_DESPESCA_G
+        trigger_peixe_pronto_hoje = data_liberacao is None and pm_relatorio >= peso_medio_alvo
 
         # Atualiza as flags independentemente de registrar
         if trigger_class1_hoje:
@@ -1091,13 +1154,15 @@ def simular_lote(
             class2_disparado = True
         if trigger_peixe_pronto_hoje:
             data_liberacao = data_dia
+            alvo_atingido = peso_medio_alvo
+            registrar = True  # Força o registro no exato dia em que atingiu a meta
 
         is_data_relatorio = data_dia == data_relatorio
         
         # Margens de tolerância apenas para o dia de geração do relatório
         exibir_class1 = trigger_class1_hoje or (is_data_relatorio and 28.0 <= pm_relatorio < 32.0)
         exibir_class2 = trigger_class2_hoje or (is_data_relatorio and 148.0 <= pm_relatorio < 152.0)
-        exibir_peixe_pronto = trigger_peixe_pronto_hoje or (is_data_relatorio and PESO_DESPESCA_G - 2.0 <= pm_relatorio < PESO_DESPESCA_G + 2.0)
+        exibir_peixe_pronto = trigger_peixe_pronto_hoje or (is_data_relatorio and peso_medio_alvo - 2.0 <= pm_relatorio < peso_medio_alvo + 2.0)
 
         if is_data_relatorio:
             if exibir_class1: class1_disparado = True
@@ -1108,7 +1173,7 @@ def simular_lote(
             dias_totais = (data_dia - data_inicial).days + 1
             dias_cultivo = max((data_dia - data_inicial).days, 1)
             semana_num = ((dias_totais - 1) // 7) + 1
-            status = definir_status(pm_relatorio, curva, dias_cultivo, data_dia, lote.data_alojamento)
+            status = definir_status(pm_relatorio, peso_medio_alvo, curva, dias_cultivo, data_dia, lote.data_alojamento)
             
             ganho_peso_total = pm_relatorio - pi
             gdp_acumulado = ganho_peso_total / dias_cultivo
@@ -1116,10 +1181,10 @@ def simular_lote(
             tanque_liberado_val = ""
             tanque_disponivel_val = ""
 
-            if exibir_peixe_pronto:
+            if data_liberacao is not None:
                 status = "Peixe Pronto"
-                tanque_liberado_val = (data_dia + timedelta(days=1)).strftime("%d/%m/%Y")
-                tanque_disponivel_val = (data_dia + timedelta(days=1 + VAZIO_SANITARIO_DIAS)).strftime("%d/%m/%Y")
+                tanque_liberado_val = (data_liberacao + timedelta(days=1)).strftime("%d/%m/%Y")
+                tanque_disponivel_val = (data_liberacao + timedelta(days=1 + VAZIO_SANITARIO_DIAS)).strftime("%d/%m/%Y")
             elif exibir_class2:
                 status = "Class 2"
                 tanque_liberado_val = (data_dia + timedelta(days=1)).strftime("%d/%m/%Y")
@@ -1156,19 +1221,19 @@ def simular_lote(
 
         if ajuste_aplicado:
             pm_real = pm_relatorio
-            peixe_pronto_no_historico = pm_relatorio >= PESO_DESPESCA_G
+            peixe_pronto_no_historico = pm_relatorio >= peso_medio_alvo
 
     while data_atual < data_relatorio and (data_atual - data_inicial).days < limite_dias:
         data_atual += timedelta(days=1)
         simular_um_dia(data_atual, registrar=data_atual == data_relatorio)
-        if q <= 0:
+        if q <= 0 or data_liberacao is not None:
             break
 
     if data_atual < data_relatorio or q <= 0:
         return registros
 
     while (
-        pm_relatorio < PESO_DESPESCA_G
+        pm_relatorio < obter_peso_medio_alvo_lote(overrides_peso, lote.produtor, data_atual)
         and q > 0
         and (data_atual - data_inicial).days < limite_dias
     ):
@@ -1184,6 +1249,7 @@ def simular_todos_lotes(
     *,
     mostrar_erros: bool = False,
     data_relatorio: date | None = None,
+    overrides_peso: dict | None = None,
 ) -> list[dict]:
     colunas = colunas_plantel(plantel)
     resultados: list[dict] = []
@@ -1193,7 +1259,7 @@ def simular_todos_lotes(
             lote = lote_da_linha(linha, colunas, tanques)
             if lote.quantidade <= 0 or lote.peso_medio_g <= 0:
                 continue
-            resultados.extend(simular_lote(lote, curvas, data_relatorio=data_relatorio))
+            resultados.extend(simular_lote(lote, curvas, data_relatorio=data_relatorio, overrides_peso=overrides_peso))
         except Exception as e:
             if mostrar_erros:
                 print(f"Erro no tanque da linha {idx}: {e}")
@@ -1344,12 +1410,17 @@ def executar(args: argparse.Namespace) -> Path:
     data_relatorio = parse_data_br(args.data_relatorio) if args.data_relatorio else date.today()
     momento_geracao = datetime.now()
 
+    # Carrega peso_medio_produtor.csv se existir na pasta de entrada
+    caminho_overrides = resolve_input_file(input_dir, "peso_medio_produtor.csv")
+    overrides_peso = carregar_peso_medio_produtor(caminho_overrides)
+
     resultado = simular_todos_lotes(
         plantel=plantel,
         tanques=tanques,
         curvas=curvas,
         mostrar_erros=args.mostrar_erros,
         data_relatorio=data_relatorio,
+        overrides_peso=overrides_peso,
     )
     resultado = adicionar_custos_racao(resultado, racao, data_relatorio)
     plantel_nova_geracao = getattr(args, "plantel_nova_geracao_output", "")
