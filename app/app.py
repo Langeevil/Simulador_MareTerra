@@ -1491,7 +1491,8 @@ def render_management_inputs(
     save_path: Path | None = None,
     transferencias_save_path: Path | None = None,
     peso_medio_df: pd.DataFrame | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
+    biomassa_alvo_df: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
     st.divider()
     title_col, action_col = st.columns([0.74, 0.26])
     with title_col:
@@ -1559,35 +1560,106 @@ def render_management_inputs(
             key=f"{key_prefix}_terceiros_transferencias_editor_{data_inicio.isoformat()}_{hash(transferencias_bytes)}"
         )
 
-    st.markdown("#### 3. Peso Médio Alvo por Produtor", help="Configure o peso de despesca esperado para cada produtor. O simulador só classificará os lotes como 'Peixe Pronto' quando o peso médio de cultivo ultrapassar o alvo definido aqui para aquele produtor naquele mês.")
-    if peso_medio_df is None or peso_medio_df.empty:
-        peso_medio_df = pd.DataFrame(columns=["Produtor"] + meses)
-    else:
-        for m in meses:
-            if m not in peso_medio_df.columns:
-                peso_medio_df[m] = ""
-        peso_medio_df = peso_medio_df[["Produtor"] + meses]
-        
-    peso_medio_col_config = {
-        "Produtor": produtor_column_config,
-    }
-    for m in meses:
-        peso_medio_col_config[m] = st.column_config.NumberColumn(m, min_value=0, step=50, format="%d g")
-        
-    df_peso_medio_editado = st.data_editor(
-        peso_medio_df,
-        num_rows="dynamic",
-        use_container_width=True,
-        hide_index=True,
-        column_config=peso_medio_col_config,
-        key=f"{key_prefix}_peso_medio_editor",
-    )
+    st.divider()
     
-    produtores_na_tabela = set(df_peso_medio_editado["Produtor"].dropna().astype(str).str.strip().str.upper())
-    produtores_na_tabela.discard("")
-    produtores_faltantes = [p for p in produtores_editor if p.strip().upper() not in produtores_na_tabela]
-    if produtores_faltantes:
-        st.error(f"Falta definir o Peso Médio Alvo para os produtores: {', '.join(produtores_faltantes)}. A simulação será bloqueada até que todos sejam preenchidos.")
+    st.markdown("### Selecione a Base de Cálculo")
+    base_calculo = st.radio(
+        "O simulador preencherá automaticamente a tabela que não for selecionada.",
+        options=["Peso Médio Alvo", "Biomassa Alvo"],
+        horizontal=True,
+        key=f"{key_prefix}_base_calculo"
+    )
+    st.session_state["base_calculo"] = base_calculo
+
+    if base_calculo == "Biomassa Alvo":
+        col_min, col_max = st.columns(2)
+        with col_min:
+            peso_minimo = st.number_input("Peso Mínimo da Faixa (g)", min_value=0, step=50, value=st.session_state.get("peso_minimo_biomassa", 700), key=f"{key_prefix}_peso_minimo")
+        with col_max:
+            peso_maximo = st.number_input("Peso Máximo da Faixa (g)", min_value=0, step=50, value=st.session_state.get("peso_maximo_biomassa", 1100), key=f"{key_prefix}_peso_maximo")
+        st.session_state["peso_minimo_biomassa"] = peso_minimo
+        st.session_state["peso_maximo_biomassa"] = peso_maximo
+
+    def render_tabela_peso_medio(index: int, disabled: bool) -> pd.DataFrame:
+        st.markdown(f"#### {index}. Peso Médio Alvo por Produtor", help="Configure o peso de despesca esperado para cada produtor. O simulador só classificará os lotes como 'Peixe Pronto' quando o peso médio de cultivo ultrapassar o alvo definido aqui para aquele produtor naquele mês.")
+        if disabled:
+            st.info("🔒 **Bloqueado para Edição:** Os valores desta tabela serão gerados automaticamente pela simulação com base na Biomassa Alvo informada.")
+        
+        if peso_medio_df is None or peso_medio_df.empty:
+            pm_df = pd.DataFrame(columns=["Produtor"] + meses)
+        else:
+            pm_df = peso_medio_df.copy()
+            for m in meses:
+                if m not in pm_df.columns:
+                    pm_df[m] = ""
+            pm_df = pm_df[["Produtor"] + meses]
+            
+        peso_medio_col_config = {
+            "Produtor": produtor_column_config,
+        }
+        for m in meses:
+            peso_medio_col_config[m] = st.column_config.NumberColumn(m, min_value=0, step=50, format="%d g")
+            
+        return st.data_editor(
+            pm_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config=peso_medio_col_config,
+            disabled=disabled,
+            key=f"{key_prefix}_peso_medio_editor",
+        )
+
+    def render_tabela_biomassa(index: int, disabled: bool) -> pd.DataFrame:
+        st.markdown(f"#### {index}. Biomassa Alvo por Produtor (t)", help="Configure a biomassa alvo em toneladas para cada produtor.")
+        if disabled:
+            st.info("🔒 **Bloqueado para Edição:** Os valores desta tabela serão gerados automaticamente pela simulação com base no Peso Médio Alvo informado.")
+        
+        if biomassa_alvo_df is None or biomassa_alvo_df.empty:
+            bio_df = pd.DataFrame(columns=["Produtor"] + meses)
+        else:
+            bio_df = biomassa_alvo_df.copy()
+            for m in meses:
+                if m not in bio_df.columns:
+                    bio_df[m] = ""
+            bio_df = bio_df[["Produtor"] + meses]
+            
+        biomassa_alvo_col_config = {
+            "Produtor": produtor_column_config,
+        }
+        for m in meses:
+            biomassa_alvo_col_config[m] = st.column_config.NumberColumn(m, min_value=0.0, step=10.0, format="%.1f t")
+            
+        return st.data_editor(
+            bio_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config=biomassa_alvo_col_config,
+            disabled=disabled,
+            key=f"{key_prefix}_biomassa_alvo_editor",
+        )
+
+    if base_calculo == "Peso Médio Alvo":
+        df_peso_medio_editado = render_tabela_peso_medio(3, False)
+        df_biomassa_alvo_editado = render_tabela_biomassa(4, True)
+    else:
+        df_biomassa_alvo_editado = render_tabela_biomassa(3, False)
+        df_peso_medio_editado = render_tabela_peso_medio(4, True)
+    
+    produtores_na_tabela_pm = set(df_peso_medio_editado["Produtor"].dropna().astype(str).str.strip().str.upper())
+    produtores_na_tabela_pm.discard("")
+    produtores_na_tabela_bio = set(df_biomassa_alvo_editado["Produtor"].dropna().astype(str).str.strip().str.upper())
+    produtores_na_tabela_bio.discard("")
+    
+    produtores_faltantes_pm = [p for p in produtores_editor if p.strip().upper() not in produtores_na_tabela_pm]
+    produtores_faltantes_bio = [p for p in produtores_editor if p.strip().upper() not in produtores_na_tabela_bio]
+
+    if base_calculo == "Peso Médio Alvo" and produtores_faltantes_pm:
+        st.error(f"Falta definir o Peso Médio Alvo para os produtores: {', '.join(produtores_faltantes_pm)}. A simulação será bloqueada até que todos sejam preenchidos.")
+        st.session_state["bloquear_simulacao"] = True
+    elif base_calculo == "Biomassa Alvo" and produtores_faltantes_bio:
+        st.error(f"Falta definir a Biomassa Alvo para os produtores: {', '.join(produtores_faltantes_bio)}. A simulação será bloqueada até que todos sejam preenchidos.")
         st.session_state["bloquear_simulacao"] = True
     else:
         st.session_state["bloquear_simulacao"] = False
@@ -1606,13 +1678,15 @@ def render_management_inputs(
     st.session_state["df_metas"] = df_metas_editado.copy()
     st.session_state["df_terceiros"] = df_transferencias_editado.copy()
     st.session_state["peso_medio_overrides"] = df_peso_medio_editado.copy()
+    st.session_state["biomassa_alvo"] = df_biomassa_alvo_editado.copy()
     st.session_state["meses_visiveis"] = list(meses_visiveis)
     
     parametros_csv = parametros_gerenciais_to_csv(df_metas_editado, pd.DataFrame(columns=TERCEIROS_COLUMNS))
     transferencias_csv = terceiros_e_transferencias_to_csv(df_transferencias_editado)
     peso_medio_csv = peso_medio_overrides_to_csv(df_peso_medio_editado, meses)
+    biomassa_alvo_csv = biomassa_alvo_to_csv(df_biomassa_alvo_editado, meses)
     
-    dl_c1, dl_c2, dl_c3 = st.columns(3)
+    dl_c1, dl_c2, dl_c3, dl_c4 = st.columns(4)
     with dl_c1:
         st.download_button(
             "📥 Baixar parâmetros gerenciais",
@@ -1639,6 +1713,15 @@ def render_management_inputs(
             mime="text/csv",
             use_container_width=True,
             key=f"{key_prefix}_download_peso_medio",
+        )
+    with dl_c4:
+        st.download_button(
+            "📥 Baixar biomassa alvo",
+            data=biomassa_alvo_csv,
+            file_name="biomassa_alvo.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key=f"{key_prefix}_download_biomassa_alvo",
         )
 
     if save_path is not None:
@@ -1669,10 +1752,13 @@ def render_management_inputs(
                 transferencias_save_path.write_bytes(transferencias_csv)
             peso_medio_save_path = save_path.parent / "peso_medio_produtor.csv"
             peso_medio_save_path.write_bytes(peso_medio_csv)
+            biomassa_alvo_save_path = save_path.parent / "biomassa_alvo.csv"
+            biomassa_alvo_save_path.write_bytes(biomassa_alvo_csv)
 
             st.session_state["df_metas"] = df_metas_editado.copy()
             st.session_state["df_terceiros"] = df_transferencias_editado.copy()
             st.session_state["peso_medio_overrides"] = df_peso_medio_editado.copy()
+            st.session_state["biomassa_alvo"] = df_biomassa_alvo_editado.copy()
             st.session_state["meses_visiveis"] = list(meses_visiveis)
             st.session_state[f"{key_prefix}_parametros_file_mtime_ns"] = save_path.stat().st_mtime_ns
             st.session_state[f"{key_prefix}_parametros_override_bytes"] = parametros_csv
@@ -1683,7 +1769,7 @@ def render_management_inputs(
             st.session_state[saved_toast_key] = True
             st.rerun()
 
-    return df_metas_editado, df_transferencias_editado, df_peso_medio_editado, meses_visiveis
+    return df_metas_editado, df_transferencias_editado, df_peso_medio_editado, df_biomassa_alvo_editado, list(meses_visiveis)
 
 
 def render_validated_management_inputs(
@@ -1695,7 +1781,8 @@ def render_validated_management_inputs(
     save_path: Path | None = None,
     transferencias_save_path: Path | None = None,
     peso_medio_df: pd.DataFrame | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]] | None:
+    biomassa_alvo_df: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]] | None:
     if parametros_bytes is None or transferencias_bytes is None:
         return None
 
@@ -1710,6 +1797,7 @@ def render_validated_management_inputs(
             save_path=save_path,
             transferencias_save_path=transferencias_save_path,
             peso_medio_df=peso_medio_df,
+            biomassa_alvo_df=biomassa_alvo_df,
         )
     except ValueError as exc:
         st.error(f"parametros_gerenciais.csv invalido: {exc}")
@@ -2097,10 +2185,53 @@ def peso_medio_overrides_to_csv(df_peso: pd.DataFrame, meses: list[str]) -> byte
     return buffer.getvalue().encode('utf-8-sig')
 
 
+def carregar_biomassa_alvo_de_caminho(caminho: Path) -> pd.DataFrame:
+    if not caminho.exists():
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(caminho, sep=";", encoding="utf-8-sig", dtype=str).fillna("")
+        if "Produtor" not in df.columns:
+            return pd.DataFrame()
+        return df
+    except Exception as e:
+        st.warning(f"Erro ao ler biomassa_alvo.csv: {e}")
+        return pd.DataFrame()
+
+
+def biomassa_alvo_to_csv(df_bio: pd.DataFrame, meses: list[str]) -> bytes:
+    if df_bio is None or df_bio.empty:
+        df = pd.DataFrame(columns=["Produtor"] + list(meses))
+    else:
+        df = df_bio.copy()
+        for m in meses:
+            if m not in df.columns:
+                df[m] = ""
+            else:
+                df[m] = df[m].apply(csv_numero_or_blank)
+        df = df[["Produtor"] + list(meses)]
+        
+    buffer = io.StringIO()
+    df.to_csv(buffer, sep=';', index=False, encoding='utf-8-sig')
+    return buffer.getvalue().encode('utf-8-sig')
+
+
 def main() -> None:
     if "peso_medio_overrides" not in st.session_state:
         default_path = RUNTIME_DIR / "data" / "input" / "peso_medio_produtor.csv"
         st.session_state["peso_medio_overrides"] = carregar_peso_medio_overrides_de_caminho(default_path)
+        
+    if "biomassa_alvo" not in st.session_state:
+        default_path_bio = RUNTIME_DIR / "data" / "input" / "biomassa_alvo.csv"
+        st.session_state["biomassa_alvo"] = carregar_biomassa_alvo_de_caminho(default_path_bio)
+
+    if "base_calculo" not in st.session_state:
+        st.session_state["base_calculo"] = "Peso Médio Alvo"
+
+    if "peso_minimo_biomassa" not in st.session_state:
+        st.session_state["peso_minimo_biomassa"] = 700
+        
+    if "peso_maximo_biomassa" not in st.session_state:
+        st.session_state["peso_maximo_biomassa"] = 1100
 
     configure_page()
     render_header()
@@ -2168,6 +2299,7 @@ def main() -> None:
             save_path=RUNTIME_DIR / "data" / "input" / PARAMETROS_FILE,
             transferencias_save_path=RUNTIME_DIR / "data" / "input" / TERCEIROS_TRANSFERENCIAS_FILE,
             peso_medio_df=st.session_state.get("peso_medio_overrides"),
+            biomassa_alvo_df=st.session_state.get("biomassa_alvo"),
         )
 
         if uploaded_files.get("curvas") is not None:
@@ -2236,7 +2368,12 @@ def main() -> None:
             local_peso_medio_path = input_dir / "peso_medio_produtor.csv"
             if local_peso_medio_path.exists():
                 st.session_state["peso_medio_overrides"] = carregar_peso_medio_overrides_de_caminho(local_peso_medio_path)
-                st.session_state.pop("unified_editor_rows", None)
+            
+            local_biomassa_alvo_path = input_dir / "biomassa_alvo.csv"
+            if local_biomassa_alvo_path.exists():
+                st.session_state["biomassa_alvo"] = carregar_biomassa_alvo_de_caminho(local_biomassa_alvo_path)
+                
+            st.session_state.pop("unified_editor_rows", None)
 
         missing_local = [
             file_name for file_name in REQUIRED_FILES.values() if not (input_dir / file_name).exists()
@@ -2260,6 +2397,7 @@ def main() -> None:
                 save_path=parametros_local,
                 transferencias_save_path=transferencias_local,
                 peso_medio_df=st.session_state.get("peso_medio_overrides"),
+                biomassa_alvo_df=st.session_state.get("biomassa_alvo"),
             )
         else:
             arquivos_ausentes = [
