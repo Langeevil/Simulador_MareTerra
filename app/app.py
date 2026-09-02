@@ -2319,7 +2319,7 @@ def main() -> None:
         else:
             if st.button("🚀 Executar Simulação", type="primary", key="btn_up_run"):
                 try:
-                    df_metas, df_terceiros, df_peso_medio, meses_visiveis = management_state
+                    df_metas, df_terceiros, df_peso_medio, df_biomassa_alvo, meses_visiveis = management_state
                     with tempfile.TemporaryDirectory() as temp_dir:
                         work_dir = Path(temp_dir)
                         for key, file_name in REQUIRED_FILES.items():
@@ -2337,6 +2337,11 @@ def main() -> None:
                         if df_peso_medio is not None:
                             (work_dir / "peso_medio_produtor.csv").write_bytes(
                                 peso_medio_overrides_to_csv(df_peso_medio, meses_visiveis or df_metas["Mês"].tolist())
+                            )
+                        
+                        if df_biomassa_alvo is not None:
+                            (work_dir / "biomassa_alvo.csv").write_bytes(
+                                biomassa_alvo_to_csv(df_biomassa_alvo, meses_visiveis or df_metas["Mês"].tolist())
                             )
                             
                         config = SimulationConfig(
@@ -2420,7 +2425,7 @@ def main() -> None:
                 st.warning("Preencha as metas de peso médio para todos os produtores.")
             st.button("🚀 Executar Simulação Local", disabled=True, key="btn_local_disabled")
         elif st.button("🚀 Executar Simulação Local", type="primary", key="btn_local_run"):
-            df_metas, df_terceiros, df_peso_medio, meses_visiveis = management_state
+            df_metas, df_terceiros, df_peso_medio, df_biomassa_alvo, meses_visiveis = management_state
             config = SimulationConfig(
                 input_dir=input_dir, plantel=REQUIRED_FILES["plantel"],
                 tanques=REQUIRED_FILES["tanques"], curvas=REQUIRED_FILES["curvas"],
