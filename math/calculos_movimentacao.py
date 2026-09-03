@@ -1,0 +1,773 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+
+import numpy as np
+import pandas as pd
+
+
+VAZIO_SANITARIO_DIAS = 5
+STATUS_BIOMETRIA = "Biometria"
+STATUS_TANQUE_DISPONIVEL = "Tanque Disponivel"
+COLUNA_DATA_TANQUE_DISPONIVEL = "Data Tanque Disponivel"
+COLUNA_TANQUES_DISPONIVEL = "Tanques Disponivel"
+COLUNA_SALDO_ACUMULADO_MES = "Saldo Acumulado Atualizado do Mes"
+ORIGEM_TERCEIROS = "Terceiros"
+
+
+def _colunas_grupo(col_agrupamento: str | Sequence[str] | None) -> list[str]:
+    if col_agrupamento is None:
+        return []
+    if isinstance(col_agrupamento, str):
+        return [col_agrupamento]
+    return list(col_agrupamento)
+
+
+def _validar_colunas(df: pd.DataFrame, colunas: Sequence[str]) -> None:
+    ausentes = pd.Index(colunas).difference(df.columns)
+    if not ausentes.empty:
+        raise KeyError(f"Colunas ausentes: {', '.join(ausentes)}")
+
+
+def _normalizar_texto_chave(serie: pd.Series) -> pd.Series:
+    return serie.fillna("").astype(str).str.strip()
+
+
+def aplicar_transferencias_biomassa(
+    df_resultados: pd.DataFrame,
+    df_transferencias: pd.DataFrame,
+    *,
+    col_data_transferencia: str = "Data",
+    col_mes_transferencia: str = "Mês",
+    col_regiao_origem: str = "Região Origem",
+    col_regiao_destino: str = "Região Destino",
+    col_classe_transferencia: str = "Classe",
+    col_produtor_transferencia: str = "Produtor",
+    col_volume: str = "Volume (kg)",
+    col_mes_resultado: str = "mes",
+    col_regiao_resultado: str = "regiao_calc",
+    col_classe_resultado: str = "classe_calc",
+    col_produtor_resultado: str = "produtor",
+    col_valor: str = "biomassa_kg",
+) -> pd.DataFrame:
+    """
+    Aplica debitos e creditos de transferencias sobre uma tabela mensal agregada.
+
+    A chave de aplicacao e mes/regiao/classe/produtor. Linhas com origem vazia
+    sao tratadas como "Terceiros" e geram apenas credito no destino.
+    """
+    colunas_resultado = [
+        col_mes_resultado,
+        col_regiao_resultado,
+        col_classe_resultado,
+        col_produtor_resultado,
+        col_valor,
+    ]
+    _validar_colunas(df_resultados, colunas_resultado)
+
+    if df_transferencias is None or df_transferencias.empty:
+        return df_resultados.copy()
+
+    colunas_transferencia = [
+        col_regiao_origem,
+        col_regiao_destino,
+        col_classe_transferencia,
+        col_produtor_transferencia,
+        col_volume,
+    ]
+    _validar_colunas(df_transferencias, colunas_transferencia)
+
+    transferencias = df_transferencias.copy()
+    if col_data_transferencia in transferencias.columns:
+        datas = pd.to_datetime(
+            transferencias[col_data_transferencia],
+            format="mixed",
+            dayfirst=True,
+            errors="coerce",
+        )
+        transferencias["_mes_transferencia"] = datas.dt.strftime("%Y-%m")
+    elif col_mes_transferencia in transferencias.columns:
+        transferencias["_mes_transferencia"] = _normalizar_texto_chave(transferencias[col_mes_transferencia])
+    else:
+        raise KeyError(f"Colunas ausentes: {col_data_transferencia} ou {col_mes_transferencia}")
+
+    origem = _normalizar_texto_chave(transferencias[col_regiao_origem])
+    transferencias[col_regiao_origem] = origem.mask(origem.eq(""), ORIGEM_TERCEIROS)
+    transferencias["_volume_transferencia"] = pd.to_numeric(
+        transferencias[col_volume],
+        errors="coerce",
+    ).fillna(0.0)
+    transferencias = transferencias[
+        transferencias["_mes_transferencia"].notna()
+        & transferencias["_mes_transferencia"].ne("")
+        & transferencias["_volume_transferencia"].ne(0)
+    ].copy()
+
+    if transferencias.empty:
+        return df_resultados.copy()
+
+    base = df_resultados.copy()
+    base[col_valor] = pd.to_numeric(base[col_valor], errors="coerce").fillna(0.0)
+
+    chaves_resultado = [
+        col_mes_resultado,
+        col_regiao_resultado,
+        col_classe_resultado,
+        col_produtor_resultado,
+    ]
+    base_agregada = (
+        base.assign(
+            **{
+                col_mes_resultado: _normalizar_texto_chave(base[col_mes_resultado]),
+                col_regiao_resultado: _normalizar_texto_chave(base[col_regiao_resultado]),
+                col_classe_resultado: _normalizar_texto_chave(base[col_classe_resultado]),
+                col_produtor_resultado: _normalizar_texto_chave(base[col_produtor_resultado]),
+            }
+        )
+        .groupby(chaves_resultado, dropna=False, sort=False, as_index=False)[col_valor]
+        .sum()
+    )
+
+    creditos = transferencias.assign(
+        **{
+            col_mes_resultado: _normalizar_texto_chave(transferencias["_mes_transferencia"]),
+            col_regiao_resultado: _normalizar_texto_chave(transferencias[col_regiao_destino]).str.upper(),
+            col_classe_resultado: _normalizar_texto_chave(transferencias[col_classe_transferencia]),
+            col_produtor_resultado: _normalizar_texto_chave(transferencias[col_produtor_transferencia]),
+            "_ajuste_transferencia": transferencias["_volume_transferencia"],
+            "_tooltip_transferencia": "Entrada: +" + transferencias["_volume_transferencia"].round(0).astype(int).astype(str) + "kg (Origem: " + _normalizar_texto_chave(transferencias[col_regiao_origem]).str.upper() + ")",
+        }
+    )[chaves_resultado + ["_ajuste_transferencia", "_tooltip_transferencia"]]
+
+    debitos_base = transferencias[
+        _normalizar_texto_chave(transferencias[col_regiao_origem]).str.casefold()
+        != ORIGEM_TERCEIROS.casefold()
+    ].assign(
+        **{
+            col_mes_resultado: _normalizar_texto_chave(transferencias["_mes_transferencia"]),
+            col_regiao_resultado: _normalizar_texto_chave(transferencias[col_regiao_origem]).str.upper(),
+            "_classe_transferencia": _normalizar_texto_chave(transferencias[col_classe_transferencia]),
+            col_produtor_resultado: _normalizar_texto_chave(transferencias[col_produtor_transferencia]),
+            "_volume_debito": transferencias["_volume_transferencia"],
+            "_regiao_destino": _normalizar_texto_chave(transferencias[col_regiao_destino]).str.upper(),
+        }
+    ).reset_index(drop=True)
+    debitos_base["_transferencia_id"] = debitos_base.index
+    chaves_debito = [col_mes_resultado, col_regiao_resultado, col_produtor_resultado]
+    base_origem = base_agregada[chaves_resultado + [col_valor]].copy()
+    debitos_match = debitos_base[
+        [*chaves_debito, "_classe_transferencia", "_volume_debito", "_transferencia_id", "_regiao_destino"]
+    ].merge(base_origem, on=chaves_debito, how="left", sort=False)
+    total_origem = debitos_match.groupby("_transferencia_id", dropna=False)[col_valor].transform("sum")
+    tem_origem = total_origem.fillna(0.0).gt(0)
+    debitos_match[col_classe_resultado] = debitos_match[col_classe_resultado].fillna(
+        debitos_match["_classe_transferencia"]
+    )
+    debitos_match["_ajuste_transferencia"] = np.where(
+        tem_origem,
+        -debitos_match["_volume_debito"] * debitos_match[col_valor].fillna(0.0) / total_origem,
+        -debitos_match["_volume_debito"],
+    )
+    debitos_match["_tooltip_transferencia"] = "Saída: " + debitos_match["_ajuste_transferencia"].round(0).astype(int).astype(str) + "kg (Destino: " + debitos_match["_regiao_destino"] + ")"
+    debitos = debitos_match[chaves_resultado + ["_ajuste_transferencia", "_tooltip_transferencia"]]
+
+    ajustes = pd.concat([creditos, debitos], ignore_index=True)
+    ajustes = ajustes[
+        ajustes[col_regiao_resultado].ne("")
+        & ajustes[col_classe_resultado].ne("")
+        & ajustes[col_produtor_resultado].ne("")
+    ]
+    if ajustes.empty:
+        return base_agregada
+
+    ajustes_soma = ajustes.groupby(chaves_resultado, dropna=False, sort=False, as_index=False)[
+        "_ajuste_transferencia"
+    ].sum()
+    
+    ajustes_tooltip = ajustes.groupby(chaves_resultado, dropna=False, sort=False, as_index=False)[
+        "_tooltip_transferencia"
+    ].agg(lambda x: "\n".join(x.dropna()))
+    
+    ajustes_finais = ajustes_soma.merge(ajustes_tooltip, on=chaves_resultado, how="left")
+
+    resultado = base_agregada.merge(ajustes_finais, on=chaves_resultado, how="outer", sort=False)
+    resultado[col_valor] = resultado[col_valor].fillna(0.0) + resultado["_ajuste_transferencia"].fillna(0.0)
+    return resultado.drop(columns=["_ajuste_transferencia"])
+
+
+def calcular_data_tanque_disponivel(
+    df: pd.DataFrame,
+    col_data: str,
+    col_tanque_liberado: str,
+    dias_vazio_sanitario: int = VAZIO_SANITARIO_DIAS,
+) -> pd.Series:
+    """
+    Calcula Data Tanque Disponivel = Data do Tanque Liberado + dias de vazio.
+
+    A data e preenchida somente nas linhas em que `col_tanque_liberado` vale 1.
+    """
+    _validar_colunas(df, [col_data, col_tanque_liberado])
+
+    datas = pd.to_datetime(df[col_data], errors="coerce")
+    liberado = pd.to_numeric(df[col_tanque_liberado], errors="coerce").fillna(0).astype(int).eq(1)
+    data_disponivel = datas + pd.to_timedelta(int(dias_vazio_sanitario), unit="D")
+    resultado = data_disponivel.where(liberado, pd.NaT)
+    resultado.name = COLUNA_DATA_TANQUE_DISPONIVEL
+    return resultado
+
+
+def calcular_flag_tanque_disponivel_por_vazio(
+    df: pd.DataFrame,
+    col_data: str,
+    col_tanque_liberado: str,
+    col_agrupamento: str | Sequence[str] | None,
+    dias_vazio_sanitario: int = VAZIO_SANITARIO_DIAS,
+) -> pd.Series:
+    """
+    Marca 1 na linha cuja data coincide com a liberacao + vazio sanitario.
+
+    Esta funcao preserva a regra historica do simulador, que cria uma linha no
+    quinto dia do vazio sanitario e marca `Tanques Disponivel = 1`.
+    """
+    grupos = _colunas_grupo(col_agrupamento)
+    _validar_colunas(df, [col_data, col_tanque_liberado, *grupos])
+
+    trabalho = df.copy()
+    trabalho["_data_calc"] = pd.to_datetime(trabalho[col_data], errors="coerce")
+    trabalho["_liberado_calc"] = pd.to_numeric(
+        trabalho[col_tanque_liberado],
+        errors="coerce",
+    ).fillna(0).astype(int)
+    trabalho["_data_disponivel_calc"] = calcular_data_tanque_disponivel(
+        trabalho,
+        col_data="_data_calc",
+        col_tanque_liberado="_liberado_calc",
+        dias_vazio_sanitario=dias_vazio_sanitario,
+    )
+
+    if grupos:
+        datas_liberadas = trabalho.loc[
+            trabalho["_liberado_calc"].eq(1),
+            [*grupos, "_data_disponivel_calc"],
+        ].dropna(subset=["_data_disponivel_calc"])
+        if datas_liberadas.empty:
+            disponivel = pd.Series(0, index=df.index, dtype="int64", name=COLUNA_TANQUES_DISPONIVEL)
+            return disponivel
+
+        chave = [*grupos, "_data_calc"]
+        datas_liberadas = datas_liberadas.rename(columns={"_data_disponivel_calc": "_data_calc"})
+        marcadores = datas_liberadas.drop_duplicates(chave).assign(_disponivel_calc=1)
+        trabalho = trabalho.merge(marcadores, on=chave, how="left", sort=False)
+        disponivel = trabalho["_disponivel_calc"].fillna(0).astype(int)
+        disponivel.index = df.index
+    else:
+        datas_disponiveis = set(trabalho["_data_disponivel_calc"].dropna())
+        disponivel = trabalho["_data_calc"].isin(datas_disponiveis).astype(int)
+
+    disponivel.name = COLUNA_TANQUES_DISPONIVEL
+    return disponivel.reindex(df.index).fillna(0).astype(int)
+
+
+def calcular_gatilho_biometria(
+    df: pd.DataFrame,
+    col_data: str,
+    col_data_ultima_biometria: str,
+) -> pd.Series:
+    """
+    Retorna True quando a data da linha cruza a data da ultima biometria.
+    """
+    _validar_colunas(df, [col_data, col_data_ultima_biometria])
+    data_linha = pd.to_datetime(df[col_data], errors="coerce").dt.normalize()
+    data_biometria = pd.to_datetime(df[col_data_ultima_biometria], errors="coerce").dt.normalize()
+    gatilho = data_linha.eq(data_biometria) & data_linha.notna()
+    gatilho.name = "Gatilho Biometria"
+    return gatilho
+
+
+def calcular_saldo_acumulado_mes(
+    df: pd.DataFrame,
+    col_saldo_dia: str,
+    col_dias_abate: str,
+    col_agrupamento: str | Sequence[str],
+) -> pd.Series:
+    """
+    Calcula o saldo acumulado mensal por grupo.
+
+    Regra:
+    Saldo Acumulado Atualizado do Mes =
+    (Saldo Acumulado do Dia * Dias de Abate) + Saldo Acumulado do Mes Anterior
+
+    O DataFrame deve chegar ordenado na sequencia temporal desejada dentro de
+    cada agrupamento, pois o mes anterior e obtido com groupby().shift(1).
+    """
+    colunas_agrupamento = _colunas_grupo(col_agrupamento)
+    if not colunas_agrupamento:
+        raise ValueError("Informe pelo menos uma coluna de agrupamento para calcular o saldo acumulado.")
+
+    _validar_colunas(df, [col_saldo_dia, col_dias_abate, *colunas_agrupamento])
+
+    if df.empty:
+        return pd.Series(index=df.index, dtype="float64", name=COLUNA_SALDO_ACUMULADO_MES)
+
+    trabalho = df.loc[:, colunas_agrupamento].copy()
+    saldo_dia = pd.to_numeric(df[col_saldo_dia], errors="coerce").fillna(0.0)
+    dias_abate = pd.to_numeric(df[col_dias_abate], errors="coerce").fillna(0.0)
+
+    trabalho["_saldo_mes_base"] = saldo_dia * dias_abate
+    trabalho["_saldo_acumulado"] = trabalho.groupby(
+        colunas_agrupamento,
+        sort=False,
+        dropna=False,
+    )["_saldo_mes_base"].cumsum()
+    saldo_mes_anterior = trabalho.groupby(
+        colunas_agrupamento,
+        sort=False,
+        dropna=False,
+    )["_saldo_acumulado"].shift(1).fillna(0.0)
+
+    saldo_acumulado = trabalho["_saldo_mes_base"] + saldo_mes_anterior
+    saldo_acumulado.name = COLUNA_SALDO_ACUMULADO_MES
+    return saldo_acumulado
+
+
+def calcular_saldo_acumulado_consolidado(
+    saldo_acumulado_apt: Mapping[str, float] | pd.Series,
+    saldo_acumulado_ita: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula o consolidado pela soma direta dos saldos acumulados regionais.
+
+    Regra:
+    Saldo Acm Atualizado / Mes Consolidado =
+    Saldo Acm Atualizado / Mes APT + Saldo Acm Atualizado / Mes ITA
+    """
+    # Regra anterior do consolidado, mantida comentada para rastreabilidade:
+    # geral_saldo_dia = total_dia_geral - po_geral
+    # geral_dias_abate = apt["dias"]
+    # geral_saldo_acm = calcular_saldo_acumulado_mes(
+    #     df_geral_saldo_mes,
+    #     col_saldo_dia="Saldo PO Atualizado",
+    #     col_dias_abate="Dias de Abate",
+    #     col_agrupamento="Grupo",
+    # )
+
+    def chaves(valores: Mapping[str, float] | pd.Series) -> list[str]:
+        if isinstance(valores, pd.Series):
+            return list(valores.index)
+        return list(valores.keys())
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(
+        dict.fromkeys([*chaves(saldo_acumulado_apt), *chaves(saldo_acumulado_ita)])
+    )
+    return {
+        mes: valor_mes(saldo_acumulado_apt, mes) + valor_mes(saldo_acumulado_ita, mes)
+        for mes in meses_calculo
+    }
+
+
+def calcular_po_atualizado_no_mes_saldo_consolidado(
+    po_atualizado_apt: Mapping[str, float] | pd.Series,
+    dias_abate_apt: Mapping[str, float] | pd.Series,
+    po_atualizado_ita: Mapping[str, float] | pd.Series,
+    dias_abate_ita: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula a linha PO Atualizado (No Mes) Saldo do consolidado.
+
+    Regra:
+    PO Atualizado (No Mes) Saldo =
+    (PO Atualizado APT * Dias de Abate APT)
+    + (PO Atualizado ITA * Dias de Abate ITA)
+    """
+    # Regras anteriores, mantidas comentadas para rastreabilidade:
+    # geral_total_mes = total_mes_apt + total_mes_ita
+    # geral_abate_po_mes = (po_apt * dias_apt) + (po_ita * dias_ita)
+    # geral_saldo_mes = geral_total_mes - geral_abate_po_mes
+    # geral_saldo_mes = saldo_po_atualizado_geral * dias_abate_ita
+
+    def chaves(valores: Mapping[str, float] | pd.Series) -> list[str]:
+        if isinstance(valores, pd.Series):
+            return list(valores.index)
+        return list(valores.keys())
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(
+        dict.fromkeys(
+            [
+                *chaves(po_atualizado_apt),
+                *chaves(dias_abate_apt),
+                *chaves(po_atualizado_ita),
+                *chaves(dias_abate_ita),
+            ]
+        )
+    )
+    return {
+        mes: (
+            valor_mes(po_atualizado_apt, mes) * valor_mes(dias_abate_apt, mes)
+            + valor_mes(po_atualizado_ita, mes) * valor_mes(dias_abate_ita, mes)
+        )
+        for mes in meses_calculo
+    }
+
+
+def calcular_po_no_mes_saldo_consolidado(
+    po_apt: Mapping[str, float] | pd.Series,
+    dias_abate_apt: Mapping[str, float] | pd.Series,
+    po_ita: Mapping[str, float] | pd.Series,
+    dias_abate_ita: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula a linha PO (No Mes) Saldo do consolidado.
+
+    Regra:
+    (PO APT * Dias de Abate APT) + (PO ITA * Dias de Abate ITA)
+    """
+    return calcular_po_atualizado_no_mes_saldo_consolidado(
+        po_apt,
+        dias_abate_apt,
+        po_ita,
+        dias_abate_ita,
+        meses,
+    )
+
+
+def calcular_saldo_po_mes_geral(
+    total_kg_mes_disponivel_abate: Mapping[str, float] | pd.Series,
+    po_no_mes: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula o saldo mensal geral.
+
+    Regra:
+    Saldo PO = Total Kg/Mes Disponivel Abate - PO no mes
+    """
+    def chaves(valores: Mapping[str, float] | pd.Series) -> list[str]:
+        if isinstance(valores, pd.Series):
+            return list(valores.index)
+        return list(valores.keys())
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(
+        dict.fromkeys([*chaves(total_kg_mes_disponivel_abate), *chaves(po_no_mes)])
+    )
+    return {
+        mes: valor_mes(total_kg_mes_disponivel_abate, mes) - valor_mes(po_no_mes, mes)
+        for mes in meses_calculo
+    }
+
+
+def calcular_saldo_acum_mes_geral(
+    saldo_po: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula saldo acumulado mensal no quadro mensal geral.
+
+    Regra:
+    Saldo acumulado = Saldo PO do mes atual + Saldo acumulado do mes anterior
+    """
+    return calcular_saldo_acumulado_dia(saldo_po, meses)
+
+
+def calcular_total_kg_mes_disponivel_abate_consolidado(
+    total_kg_dia_apt: Mapping[str, float] | pd.Series,
+    dias_abate_apt: Mapping[str, float] | pd.Series,
+    total_kg_dia_ita: Mapping[str, float] | pd.Series,
+    dias_abate_ita: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula Total Kg/Mes Disponivel Abate do consolidado conforme a planilha.
+
+    Regra:
+    (Total Kg/Dia Dispon Abate APT * Dias de Abate APT)
+    + (Total Kg/Dia Dispon Abate ITA * Dias de Abate ITA)
+    """
+    # Regra anterior, mantida comentada para rastreabilidade:
+    # geral_total_mes = total_mes_apt + total_mes_ita
+
+    def chaves(valores: Mapping[str, float] | pd.Series) -> list[str]:
+        if isinstance(valores, pd.Series):
+            return list(valores.index)
+        return list(valores.keys())
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(
+        dict.fromkeys(
+            [
+                *chaves(total_kg_dia_apt),
+                *chaves(dias_abate_apt),
+                *chaves(total_kg_dia_ita),
+                *chaves(dias_abate_ita),
+            ]
+        )
+    )
+    return {
+        mes: (
+            valor_mes(total_kg_dia_apt, mes) * valor_mes(dias_abate_apt, mes)
+            + valor_mes(total_kg_dia_ita, mes) * valor_mes(dias_abate_ita, mes)
+        )
+        for mes in meses_calculo
+    }
+
+
+def referenciar_saldo_atualizado_dia(
+    saldo_atualizado_dia: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Copia mes a mes o Saldo Atualizado / dia de uma aba regional.
+
+    Regra usada no consolidado para referenciar uma linha ja calculada, como
+    uma celula de outra aba no Excel.
+    """
+    # Regra anterior, mantida comentada para rastreabilidade:
+    # saldo_po_atual_x_disponivel = saldo_atualizado_dia * dias_abate
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(saldo_atualizado_dia.keys())
+    return {mes: valor_mes(saldo_atualizado_dia, mes) for mes in meses_calculo}
+
+
+def referenciar_po_regional(
+    po_regional: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Copia mes a mes a linha PO de uma aba regional.
+    """
+    # Regra anterior, mantida comentada para rastreabilidade:
+    # po_consolidado_regional = po_atualizado_regional
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(po_regional.keys())
+    return {mes: valor_mes(po_regional, mes) for mes in meses_calculo}
+
+
+def calcular_total_kg_dia_disponivel_abate(
+    kg_dia_proprio: Mapping[str, float] | pd.Series,
+    kg_dia_integracao: Mapping[str, float] | pd.Series,
+    kg_dia_parceria: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula Total Kg/Dia Dispon Abate pela soma das linhas de categoria.
+
+    Regra:
+    Total Kg/Dia Dispon Abate =
+    Kg/Dia Proprio + Kg/Dia Integracao + Kg/Dia Parceria
+    """
+    # Regra anterior, mantida comentada para rastreabilidade:
+    # total_kg_dia_disponivel_abate = linha regional ja calculada
+
+    def chaves(valores: Mapping[str, float] | pd.Series) -> list[str]:
+        if isinstance(valores, pd.Series):
+            return list(valores.index)
+        return list(valores.keys())
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(
+        dict.fromkeys([*chaves(kg_dia_proprio), *chaves(kg_dia_integracao), *chaves(kg_dia_parceria)])
+    )
+    return {
+        mes: (
+            valor_mes(kg_dia_proprio, mes)
+            + valor_mes(kg_dia_integracao, mes)
+            + valor_mes(kg_dia_parceria, mes)
+        )
+        for mes in meses_calculo
+    }
+
+
+def referenciar_saldo_acumulado_regional(
+    saldo_acumulado_regional: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Copia mes a mes a linha de saldo acumulado de uma aba regional.
+    """
+    # Regra anterior, mantida comentada para rastreabilidade:
+    # saldo_po_atual_x_disponivel = saldo_atualizado_dia * dias_abate
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(saldo_acumulado_regional.keys())
+    return {mes: valor_mes(saldo_acumulado_regional, mes) for mes in meses_calculo}
+
+
+def calcular_saldo_po_atual_disponivel_dia(
+    total_kg_dia_disponivel_abate: Mapping[str, float] | pd.Series,
+    po_atualizado: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula Saldo PO Atual. x Disponivel no quadro diario regional.
+
+    Regra:
+    Total Kg/Dia Dispon Abate - PO Atualizado
+    """
+    # Regras anteriores, mantidas comentadas para rastreabilidade:
+    # saldo_po_atual_x_disponivel = saldo_atualizado_dia * dias_abate
+    # saldo_po_atual_x_disponivel = saldo_acumulado_regional
+
+    def chaves(valores: Mapping[str, float] | pd.Series) -> list[str]:
+        if isinstance(valores, pd.Series):
+            return list(valores.index)
+        return list(valores.keys())
+
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(
+        dict.fromkeys([*chaves(total_kg_dia_disponivel_abate), *chaves(po_atualizado)])
+    )
+    return {
+        mes: valor_mes(total_kg_dia_disponivel_abate, mes) - valor_mes(po_atualizado, mes)
+        for mes in meses_calculo
+    }
+
+
+def calcular_saldo_acumulado_dia(
+    saldo_dia: Mapping[str, float] | pd.Series,
+    meses: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """
+    Calcula saldo acumulado dia a dia no quadro geral.
+
+    Regra:
+    Saldo Acm / Dia = Saldo do mes atual + Saldo Acm / Dia do mes anterior
+    """
+    def valor_mes(valores: Mapping[str, float] | pd.Series, mes: str) -> float:
+        bruto = valores.get(mes, 0.0)
+        numero = pd.to_numeric(bruto, errors="coerce")
+        return 0.0 if pd.isna(numero) else float(numero)
+
+    meses_calculo = list(meses) if meses is not None else list(saldo_dia.keys())
+    acumulado = 0.0
+    resultado: dict[str, float] = {}
+    for mes in meses_calculo:
+        acumulado += valor_mes(saldo_dia, mes)
+        resultado[mes] = acumulado
+    return resultado
+
+
+def calcular_status_com_biometria(
+    df: pd.DataFrame,
+    col_status: str,
+    col_data: str,
+    col_data_ultima_biometria: str,
+    status_biometria: str = STATUS_BIOMETRIA,
+    preservar_status: Sequence[str] = ("Peixe Pronto", "Class 1", "Class 2", STATUS_TANQUE_DISPONIVEL),
+) -> pd.Series:
+    """
+    Atualiza o status para biometria quando Data == Data Ultima Biometria.
+
+    Por padrao, status operacionais de maior prioridade sao preservados para
+    manter a mesma hierarquia descrita no simulador atual.
+    """
+    _validar_colunas(df, [col_status, col_data, col_data_ultima_biometria])
+    status = df[col_status].fillna("").astype(str).copy()
+    gatilho = calcular_gatilho_biometria(df, col_data, col_data_ultima_biometria)
+
+    status_normalizado = status.str.strip().str.lower()
+    preservar_normalizado = {str(valor).strip().lower() for valor in preservar_status}
+    pode_substituir = ~status_normalizado.isin(preservar_normalizado)
+
+    status.loc[gatilho & pode_substituir] = status_biometria
+    status.name = col_status
+    return status
+
+
+def aplicar_vazio_sanitario(
+    df: pd.DataFrame,
+    *,
+    col_data: str,
+    col_tanque_liberado: str,
+    col_agrupamento: str | Sequence[str] | None = None,
+    dias_vazio_sanitario: int = VAZIO_SANITARIO_DIAS,
+    col_saida_data_disponivel: str = COLUNA_DATA_TANQUE_DISPONIVEL,
+    col_saida_tanques_disponivel: str | None = None,
+) -> pd.DataFrame:
+    """
+    Devolve uma copia do DataFrame com a data de disponibilidade calculada.
+    """
+    resultado = df.copy()
+    resultado[col_saida_data_disponivel] = calcular_data_tanque_disponivel(
+        resultado,
+        col_data=col_data,
+        col_tanque_liberado=col_tanque_liberado,
+        dias_vazio_sanitario=dias_vazio_sanitario,
+    )
+
+    if col_saida_tanques_disponivel:
+        resultado[col_saida_tanques_disponivel] = calcular_flag_tanque_disponivel_por_vazio(
+            resultado,
+            col_data=col_data,
+            col_tanque_liberado=col_tanque_liberado,
+            col_agrupamento=col_agrupamento,
+            dias_vazio_sanitario=dias_vazio_sanitario,
+        )
+
+    return resultado
+
+
+def aplicar_status_biometria(
+    df: pd.DataFrame,
+    *,
+    col_status: str,
+    col_data: str,
+    col_data_ultima_biometria: str,
+    status_biometria: str = STATUS_BIOMETRIA,
+    preservar_status: Sequence[str] = ("Peixe Pronto", "Class 1", "Class 2", STATUS_TANQUE_DISPONIVEL),
+) -> pd.DataFrame:
+    """
+    Devolve uma copia do DataFrame com o gatilho de biometria aplicado.
+    """
+    resultado = df.copy()
+    resultado[col_status] = calcular_status_com_biometria(
+        resultado,
+        col_status=col_status,
+        col_data=col_data,
+        col_data_ultima_biometria=col_data_ultima_biometria,
+        status_biometria=status_biometria,
+        preservar_status=preservar_status,
+    )
+    return resultado

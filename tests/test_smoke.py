@@ -106,6 +106,64 @@ class SimuladorSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "sem colunas obrigatorias"):
             preparar_parametros_gerenciais(df.drop(columns=["volume_kg"]))
 
+    def test_terceiros_transferencias_origem_vazia_vira_terceiros(self) -> None:
+        csv_bytes = (
+            "Mês;Região Origem;Região Destino;Classe;Produtor;Volume (kg)\n"
+            "01/06/2026;;APT;Parceria;Prod X;2500\n"
+        ).encode("utf-8-sig")
+        df = app.parse_terceiros_e_transferencias(csv_bytes)
+        self.assertEqual(df.loc[0, "Mês"], "2026-06")
+        self.assertEqual(df.loc[0, "Região Origem"], "Terceiros")
+
+        exported = app.terceiros_e_transferencias_to_csv(df).decode("utf-8-sig")
+        self.assertIn("2026-06;Terceiros;APT;Parceria;Prod X;2500", exported)
+
+    def test_transferencias_biomassa_aplica_debito_e_credito_por_mes(self) -> None:
+        base = pd.DataFrame({
+            "regiao_calc": ["APT", "ITA"],
+            "classe_calc": ["Próprio", "Próprio"],
+            "produtor": ["Prod A", "Prod A"],
+            "mes": ["2026-06", "2026-06"],
+            "biomassa_kg": [1000.0, 100.0],
+        })
+        transferencias = pd.DataFrame({
+            "Mês": ["2026-06", "2026-06"],
+            "Região Origem": ["APT", ""],
+            "Região Destino": ["ITA", "APT"],
+            "Classe": ["Próprio", "Próprio"],
+            "Produtor": ["Prod A", "Prod A"],
+            "Volume (kg)": [300.0, 50.0],
+        })
+
+        resultado = app.aplicar_transferencias_biomassa(base, transferencias)
+        valores = resultado.set_index(["regiao_calc", "produtor", "mes"])["biomassa_kg"]
+
+        self.assertEqual(float(valores.loc[("APT", "Prod A", "2026-06")]), 750.0)
+        self.assertEqual(float(valores.loc[("ITA", "Prod A", "2026-06")]), 400.0)
+
+    def test_transferencia_debita_classe_real_da_origem(self) -> None:
+        base = pd.DataFrame({
+            "regiao_calc": ["ITA"],
+            "classe_calc": ["Integração"],
+            "produtor": ["Prod A"],
+            "mes": ["2026-06"],
+            "biomassa_kg": [350000.0],
+        })
+        transferencias = pd.DataFrame({
+            "Mês": ["2026-06"],
+            "Região Origem": ["ITA"],
+            "Região Destino": ["APT"],
+            "Classe": ["Parceria"],
+            "Produtor": ["Prod A"],
+            "Volume (kg)": [100000.0],
+        })
+
+        resultado = app.aplicar_transferencias_biomassa(base, transferencias)
+        valores = resultado.set_index(["regiao_calc", "classe_calc", "produtor", "mes"])["biomassa_kg"]
+
+        self.assertEqual(float(valores.loc[("ITA", "Integração", "Prod A", "2026-06")]), 250000.0)
+        self.assertEqual(float(valores.loc[("APT", "Parceria", "Prod A", "2026-06")]), 100000.0)
+
     def test_custo_acumulado_uses_report_date_and_lote_group(self) -> None:
         registros = [
             {

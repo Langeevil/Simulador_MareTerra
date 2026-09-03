@@ -4,11 +4,13 @@ import argparse
 import base64
 import csv
 import html
+import importlib
 import io
 import os
 import sys
 import tempfile
 import re
+import unicodedata
 from collections import defaultdict
 from contextlib import redirect_stdout
 from dataclasses import dataclass
@@ -30,13 +32,45 @@ for import_dir in (SRC_DIR, APP_DIR, MATH_DIR):
     if str(import_dir) not in sys.path:
         sys.path.insert(0, str(import_dir))
 
-from calculos_saldo import calcular_saldo_acumulado_mes
-from theme_config import PatternName, is_display_numeric_value, normalize_label, style_dark_regional_report
+from calculos_saldo import calcular_saldo_acumulado_mes  # type: ignore
+import calculos_movimentacao  # type: ignore
+from calculos_esperado_realizado import process_esperado_realizado  # type: ignore
+from theme_config import (
+    PatternName, 
+    is_display_numeric_value, 
+    normalize_label, 
+    style_dark_regional_report,
+    style_sobras_faltas_dataframe
+)
 from theme_consolidado import style_consolidado_dataframe
+from theme_esperado_realizado import style_esperado_realizado_dataframe
+
+calculos_movimentacao = importlib.reload(calculos_movimentacao)
+calcular_saldo_acumulado_consolidado = calculos_movimentacao.calcular_saldo_acumulado_consolidado
+calcular_po_atualizado_no_mes_saldo_consolidado = (
+    calculos_movimentacao.calcular_po_atualizado_no_mes_saldo_consolidado
+)
+calcular_po_no_mes_saldo_consolidado = calculos_movimentacao.calcular_po_no_mes_saldo_consolidado
+calcular_saldo_po_mes_geral = calculos_movimentacao.calcular_saldo_po_mes_geral
+calcular_saldo_acum_mes_geral = calculos_movimentacao.calcular_saldo_acum_mes_geral
+calcular_total_kg_mes_disponivel_abate_consolidado = (
+    calculos_movimentacao.calcular_total_kg_mes_disponivel_abate_consolidado
+)
+referenciar_saldo_atualizado_dia = calculos_movimentacao.referenciar_saldo_atualizado_dia
+referenciar_po_regional = calculos_movimentacao.referenciar_po_regional
+calcular_total_kg_dia_disponivel_abate = (
+    calculos_movimentacao.calcular_total_kg_dia_disponivel_abate
+)
+referenciar_saldo_acumulado_regional = calculos_movimentacao.referenciar_saldo_acumulado_regional
+calcular_saldo_po_atual_disponivel_dia = (
+    calculos_movimentacao.calcular_saldo_po_atual_disponivel_dia
+)
+calcular_saldo_acumulado_dia = calculos_movimentacao.calcular_saldo_acumulado_dia
+aplicar_transferencias_biomassa = calculos_movimentacao.aplicar_transferencias_biomassa
 
 # Tentativa de importação do motor da simulação
 try:
-    from simulador_aquicola import (
+    from simulador_aquicola import (  # type: ignore
         carregar_csv,
         executar,
         preparar_curvas,
@@ -51,6 +85,11 @@ APP_TITLE = "Simulador de Planejamento Aquícola - Mar & Terra"
 DEFAULT_OUTPUT = "simulacao_completa_br.csv"
 BRAND_GREEN = "#17413B"
 BRAND_GOLD = "#BC933F"
+CHART_COLORS = [
+    "#0F6B5F",  # verde petroleo da marca, mais legivel em fundo claro/escuro
+    "#D6A33A",  # dourado da marca com mais luminosidade para linhas finas
+    "#2563EB",  # azul complementar para diferenciar a terceira serie
+]
 LOGO_WHITE = ROOT_DIR / "app" / "assets" / "mar-terra-logo-branca.png"
 LOGO_BLACK = ROOT_DIR / "app" / "assets" / "mar-terra-logo-preta.png"
 REQUIRED_FILES = {
@@ -59,8 +98,10 @@ REQUIRED_FILES = {
     "curvas": "curvas.csv",
     "racao": "racao.csv",
     "parametros_gerenciais": "parametros_gerenciais.csv",
+    "terceiros_e_transferencias": "terceiros_e_transferencias.csv",
 }
 PARAMETROS_FILE = "parametros_gerenciais.csv"
+TERCEIROS_TRANSFERENCIAS_FILE = "terceiros_e_transferencias.csv"
 
 
 def runtime_root() -> Path:
@@ -92,9 +133,16 @@ class SimulationConfig:
     curvas: str
     racao: str
     parametros_gerenciais: str
+    terceiros_e_transferencias: str
     output: str
     data_relatorio: date
     mostrar_erros: bool
+    peso_minimo_biomassa: float
+    peso_maximo_biomassa: float
+    semanas_no_mes: int
+    capacidade_carga_a_ton: float
+    capacidade_carga_b_ton: float
+    margem_tolerancia_carga: float
 
 @dataclass(frozen=True)
 class ReportArtifact:
@@ -112,12 +160,12 @@ class RegionalReportSection:
 
 
 REGIONAL_REPORT_SECTIONS: tuple[RegionalReportSection, ...] = (
-    RegionalReportSection("QUADRO DE PEIXE GORDO - PRÓPRIO", "A", "quadro de peixe gordo - proprio"),
-    RegionalReportSection("QUADRO DE PEIXE GORDO - INTEGRAÇÃO", "B", "quadro de peixe gordo - integracao"),
-    RegionalReportSection("QUADRO DE PEIXE GORDO - PARCERIA", "C", "quadro de peixe gordo - parceria"),
-    RegionalReportSection("QUADRO DE PEIXE GORDO TOTAL", "A", "quadro de peixe gordo total"),
-    RegionalReportSection("QUADRO DE DISPONIBILIDADE PARA O ABATE POR DIA", "B", "quadro de disponibilidade para o abate por dia"),
-    RegionalReportSection("QUADRO DO SALDO DA DISPONIBILIDADE PARA O ABATE POR DIA e POR MÊS", "B", "quadro do saldo da disponibilidade"),
+    RegionalReportSection("QD PEIXE GORDO - PRÓPRIO", "A", "qd peixe gordo - proprio"),
+    RegionalReportSection("QD PEIXE GORDO - INTEGRAÇÃO", "B", "qd peixe gordo - integracao"),
+    RegionalReportSection("QD PEIXE GORDO - PARCERIA", "C", "qd peixe gordo - parceria"),
+    RegionalReportSection("QD PEIXE GORDO TOTAL", "A", "qd peixe gordo total"),
+    RegionalReportSection("QD DISP P/ ABATE / DIA", "B", "qd disp p/ abate / dia"),
+    RegionalReportSection("QD SALDO DISP P/ O ABATE / DIA e / MÊS", "B", "qd saldo disp"),
 )
 
 # ==========================================
@@ -239,9 +287,20 @@ def clean_and_prepare_dataframe(csv_bytes: bytes) -> pd.DataFrame:
             'ganho de biomassa acumulado (kg)': 'ganho_biomassa_acumulado_kg',
             'mortalidade acumulada (peixes)': 'mortalidade_acumulada_peixes',
             'mortalidade diaria (peixes)': 'mortalidade_diaria_peixes',
+            'custo de racao diario': 'custo_de_racao_diario',
+            'custo de ração diario': 'custo_de_racao_diario',
+            'custo de racao acumulado': 'custo_de_racao_acumulado',
+            'custo de ração acumulado': 'custo_de_racao_acumulado',
+            'tca diario': 'tca_diario',
+            'tca acumulado': 'tca_acumulado',
+            'gdp diario (g/dia)': 'gdp_diario_g_dia',
+            'gdp acumulado (g)': 'gdp_acumulado_g',
+            'sobrevivencia diaria (%)': 'sobrevivencia_diaria_pct',
+            'sobrevivencia acumulada (%)': 'sobrevivencia_acumulada_pct',
             'tanques disponivel': 'tanques_disponivel',
             'tanques disponíveis': 'tanques_disponivel',
             'tanques liberados': 'tanques_liberados',
+            'semana': 'semana',
         }
         df.rename(columns=col_mapping, inplace=True)
         
@@ -262,11 +321,22 @@ def clean_and_prepare_dataframe(csv_bytes: bytes) -> pd.DataFrame:
         df['peso_medio_g'] = pd.to_numeric(df['peso_medio_g'], errors='coerce').fillna(0.0)
 
         for numeric_col in [
+            'quantidade de peixes',
+            'semana',
             'consumo_racao_diario_kg',
+            'consumo_racao_na_fase_kg',
             'consumo_racao_acumulado_kg',
+            'custo_de_racao_diario',
+            'custo_de_racao_acumulado',
             'ganho_biomassa_acumulado_kg',
-            'mortalidade_acumulada_peixes',
+            'tca_diario',
+            'tca_acumulado',
+            'gdp_diario_g_dia',
+            'gdp_acumulado_g',
             'mortalidade_diaria_peixes',
+            'mortalidade_acumulada_peixes',
+            'sobrevivencia_diaria_pct',
+            'sobrevivencia_acumulada_pct',
         ]:
             if numeric_col not in df.columns:
                 df[numeric_col] = 0.0
@@ -294,10 +364,17 @@ def clean_and_prepare_dataframe(csv_bytes: bytes) -> pd.DataFrame:
         df['classe_calc'] = np.where(df['classe_padrao'].str.contains('Prop|Próp'), 'Próprio',
                             np.where(df['classe_padrao'].str.contains('Parc'), 'Parceria', 'Integração'))
 
-        for flag_col in ['tanques_disponivel', 'tanques_liberados']:
-            if flag_col not in df.columns:
-                df[flag_col] = 0
-            df[flag_col] = pd.to_numeric(df[flag_col], errors='coerce').fillna(0).astype(int)
+        if 'tanques_liberados' not in df.columns:
+            df['tanques_liberados'] = ""
+        else:
+            df['tanques_liberados'] = df['tanques_liberados'].fillna("").astype(str)
+            df.loc[df['tanques_liberados'].isin(['0', '0.0', 'nan', 'NaN']), 'tanques_liberados'] = ""
+
+        if 'tanques_disponivel' not in df.columns:
+            df['tanques_disponivel'] = ""
+        else:
+            df['tanques_disponivel'] = df['tanques_disponivel'].fillna("").astype(str)
+            df.loc[df['tanques_disponivel'].isin(['0', '0.0', 'nan', 'NaN']), 'tanques_disponivel'] = ""
 
         return df
     except Exception as e:
@@ -336,15 +413,34 @@ def normalizar_coluna_app(valor: object) -> str:
         .replace("ú", "u")
         .replace("ç", "c")
     )
+    texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
     return re.sub(r"[^a-z0-9]+", "_", texto).strip("_")
 
 
-METAS_COLUMNS = ["Mês", "Dias Abate APT", "PO Diário APT (kg)", "Dias Abate ITA", "PO Diário ITA (kg)"]
+METAS_COLUMNS = [
+    "Mês",
+    "Dias Abate APT",
+    "PO Diário APT (kg)",
+    "Dias Abate ITA",
+    "PO Diário ITA (kg)",
+]
 TERCEIROS_COLUMNS = ["Região Destino", "Classe", "Produtor", "Mês", "Volume (kg)"]
+TERCEIROS_TRANSFERENCIAS_COLUMNS = [
+    "Mês",
+    "Região Origem",
+    "Região Destino",
+    "Classe",
+    "Produtor",
+    "Volume (kg)",
+]
 
 
 def empty_management_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     return pd.DataFrame(columns=METAS_COLUMNS), pd.DataFrame(columns=TERCEIROS_COLUMNS)
+
+
+def empty_terceiros_transferencias_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=TERCEIROS_TRANSFERENCIAS_COLUMNS)
 
 
 def integer_or_blank(valor: object) -> int | None:
@@ -368,11 +464,115 @@ def csv_numero_or_blank(valor: object) -> object:
     return str(numero)
 
 
+def csv_mes_or_blank(valor: object) -> str:
+    if pd.isna(valor):
+        return ""
+    texto = str(valor).strip()
+    if re.fullmatch(r"\d{4}-\d{2}", texto):
+        return texto
+    data = pd.to_datetime(texto, format="mixed", dayfirst=True, errors="coerce")
+    if pd.isna(data):
+        return ""
+    return data.strftime("%Y-%m")
+
+
+def limpar_origem_terceiros(df: pd.DataFrame) -> pd.DataFrame:
+    resultado = df.copy()
+    if "Região Origem" not in resultado.columns:
+        resultado["Região Origem"] = ""
+    resultado["Região Origem"] = resultado["Região Origem"].fillna("").astype(str).str.strip().replace("", "Terceiros")
+    return resultado
+
+
+def valores_unicos_ordenados(*series: pd.Series | list[str] | tuple[str, ...] | None) -> list[str]:
+    valores: set[str] = set()
+    for serie in series:
+        if serie is None:
+            continue
+        for valor in list(serie):
+            texto = str(valor).strip()
+            if texto and texto.lower() != "nan":
+                valores.add(texto)
+    return sorted(valores)
+
+
+def opcoes_plantel(csv_bytes: bytes | None) -> tuple[list[str], list[str]]:
+    if not csv_bytes:
+        return [], []
+    try:
+        plantel = pd.read_csv(io.BytesIO(csv_bytes), sep=';', encoding='utf-8-sig', dtype=str).fillna("")
+        if plantel.shape[1] == 1:
+            plantel = pd.read_csv(io.BytesIO(csv_bytes), sep=',', encoding='utf-8-sig', dtype=str).fillna("")
+    except Exception:
+        return [], []
+
+    colunas_normalizadas = {normalizar_coluna_app(coluna): coluna for coluna in plantel.columns}
+    produtor_col = colunas_normalizadas.get("produtor")
+    regiao_col = colunas_normalizadas.get("regiao")
+    produtores = valores_unicos_ordenados(plantel[produtor_col]) if produtor_col else []
+    regioes = valores_unicos_ordenados(plantel[regiao_col]) if regiao_col else []
+    regioes = [
+        "APT" if "APT" in regiao.upper() or "TABOADO" in regiao.upper()
+        else "ITA" if "ITA" in regiao.upper() or "ITAPOR" in regiao.upper()
+        else regiao.upper()
+        for regiao in regioes
+    ]
+    return valores_unicos_ordenados(produtores), valores_unicos_ordenados(regioes)
+
+
+def parse_terceiros_e_transferencias(csv_bytes: bytes | None) -> pd.DataFrame:
+    if not csv_bytes:
+        return empty_terceiros_transferencias_frame()
+
+    raw = pd.read_csv(io.BytesIO(csv_bytes), sep=';', encoding='utf-8-sig', dtype=str).replace(["None", "nan", "NaN"], "").fillna("")
+    if "Mês" not in raw.columns and "Data" in raw.columns:
+        raw = raw.rename(columns={"Data": "Mês"})
+    for coluna in TERCEIROS_TRANSFERENCIAS_COLUMNS:
+        if coluna not in raw.columns:
+            raw[coluna] = ""
+    raw = raw[TERCEIROS_TRANSFERENCIAS_COLUMNS].copy()
+    raw = limpar_origem_terceiros(raw)
+    raw["Mês"] = raw["Mês"].map(csv_mes_or_blank)
+    raw["Volume (kg)"] = raw["Volume (kg)"].map(integer_or_blank)
+    return raw
+
+
+def legacy_terceiros_to_transferencias(df_terceiros: pd.DataFrame) -> pd.DataFrame:
+    if df_terceiros is None or df_terceiros.empty:
+        return empty_terceiros_transferencias_frame()
+
+    resultado = pd.DataFrame({
+        "Mês": df_terceiros.get("Mês", pd.Series(dtype=str)).astype(str).str.strip(),
+        "Região Origem": "",
+        "Região Destino": df_terceiros.get("Região Destino", ""),
+        "Classe": df_terceiros.get("Classe", ""),
+        "Produtor": df_terceiros.get("Produtor", ""),
+        "Volume (kg)": df_terceiros.get("Volume (kg)", ""),
+    })
+    resultado["Volume (kg)"] = resultado["Volume (kg)"].map(integer_or_blank)
+    return resultado[TERCEIROS_TRANSFERENCIAS_COLUMNS]
+
+
+def terceiros_e_transferencias_to_csv(df_transferencias: pd.DataFrame) -> bytes:
+    if df_transferencias is None:
+        df_transferencias = empty_terceiros_transferencias_frame()
+    output = df_transferencias.copy()
+    for coluna in TERCEIROS_TRANSFERENCIAS_COLUMNS:
+        if coluna not in output.columns:
+            output[coluna] = ""
+    output = limpar_origem_terceiros(output[TERCEIROS_TRANSFERENCIAS_COLUMNS])
+    output["Mês"] = output["Mês"].map(csv_mes_or_blank)
+    output["Volume (kg)"] = output["Volume (kg)"].map(csv_numero_or_blank)
+    buffer = io.StringIO()
+    output.to_csv(buffer, sep=';', index=False)
+    return buffer.getvalue().encode("utf-8-sig")
+
+
 def parse_parametros_gerenciais(csv_bytes: bytes, data_inicio: date, num_meses: int = 12) -> tuple[pd.DataFrame, pd.DataFrame]:
     if not csv_bytes:
         return empty_management_frames()
 
-    raw = pd.read_csv(io.BytesIO(csv_bytes), sep=';', encoding='utf-8-sig', dtype=str).fillna("")
+    raw = pd.read_csv(io.BytesIO(csv_bytes), sep=';', encoding='utf-8-sig', dtype=str).replace(["None", "nan", "NaN"], "").fillna("")
     parametros = preparar_parametros_gerenciais(raw)
 
     metas = parametros["metas"].copy()
@@ -464,64 +664,97 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
 
     months = df_metas['Mês'].tolist()
 
-    # 1. Filtro Estratégico: Região e Status de Abate
-    df_reg = df[(df['regiao_calc'] == region) & ((df['status'] == 'peixe pronto') | (df['peso_medio_g'] >= 900))]
+    # 1. Filtro Estratégico: Status de Abate
+    status_pronto = df['status'].astype(str).str.strip().str.lower().eq('peixe pronto')
+    df_ready = df[status_pronto]
     
     # 2. Remoção de Duplicatas (Manter apenas o último registro do lote no mês)
-    df_reg = df_reg.sort_values('data').drop_duplicates(subset=['produtor', 'tanque', 'mes'], keep='last')
+    df_ready = df_ready.sort_values('data').drop_duplicates(
+        subset=['regiao_calc', 'produtor', 'tanque', 'mes'],
+        keep='last',
+    )
 
     # 3. Agregação Vetorizada de Biomassa
-    if not df_reg.empty:
-        df_grouped = df_reg.groupby(['classe_calc', 'produtor', 'mes'])['biomassa_kg'].sum().reset_index()
+    if not df_ready.empty:
+        df_grouped = df_ready.groupby(
+            ['regiao_calc', 'classe_calc', 'produtor', 'mes'],
+            as_index=False,
+        )['biomassa_kg'].sum()
     else:
-        df_grouped = pd.DataFrame(columns=['classe_calc', 'produtor', 'mes', 'biomassa_kg'])
+        df_grouped = pd.DataFrame(columns=['regiao_calc', 'classe_calc', 'produtor', 'mes', 'biomassa_kg'])
+
+    df_transferencias_calc = (
+        legacy_terceiros_to_transferencias(df_terceiros)
+        if df_terceiros is not None and not df_terceiros.empty and "Região Origem" not in df_terceiros.columns
+        else df_terceiros
+    )
+    df_grouped = aplicar_transferencias_biomassa(df_grouped, df_transferencias_calc)
+    df_grouped = df_grouped[df_grouped['regiao_calc'] == region]
 
     # 4. Estrutura de Memória Otimizada (Dicionário de Matrizes)
     block_data = defaultdict(lambda: defaultdict(float))
+    tooltip_data = defaultdict(lambda: defaultdict(str))
     producers_by_classe = {"Próprio": set(), "Integração": set(), "Parceria": set()}
 
     # Alimentar dados da simulação
     for _, row in df_grouped.iterrows():
         c, p, m, v = row['classe_calc'], row['produtor'], row['mes'], row['biomassa_kg']
+        t = row.get('_tooltip_transferencia', '')
         if m in months:
             block_data[(c, p)][m] += v
+            if pd.notna(t) and t != '':
+                tooltip_data[(c, p)][m] = str(t)
             producers_by_classe[c].add(p)
-
-    # Alimentar lançamentos manuais (Terceiros/Transferências)
-    if not df_terceiros.empty:
-        t_reg = df_terceiros[df_terceiros['Região Destino'] == region]
-        for _, row in t_reg.iterrows():
-            c, p, m = row['Classe'], row['Produtor'], row['Mês']
-            v = pd.to_numeric(row.get('Volume (kg)', 0), errors="coerce")
-            if m in months and pd.notna(v):
-                block_data[(c, p)][m] += float(v)
-                producers_by_classe[c].add(p)
 
     # ==========================================
     # MONTAGEM DO LAYOUT CORPORATIVO EXCEL
     # ==========================================
     output_rows = []
+    tooltip_rows = []
+    
+    def add_row(row_dict, tooltip_dict=None):
+        output_rows.append(row_dict)
+        if tooltip_dict is None:
+            tooltip_dict = {"Conteúdo / Bloco": None}
+            for col in row_dict.keys():
+                if col != "Conteúdo / Bloco":
+                    tooltip_dict[col] = None
+        else:
+            for k, v in tooltip_dict.items():
+                if v == "":
+                    tooltip_dict[k] = None
+        tooltip_rows.append(tooltip_dict)
+
     totals = {c: {m: 0.0 for m in months} for c in producers_by_classe.keys()}
 
     # Blocos de Produtores
     for cl in ["Próprio", "Integração", "Parceria"]:
-        output_rows.append({"Conteúdo / Bloco": f"QUADRO DE PEIXE GORDO - {cl.upper()} - {region}", **{m: "" for m in months}})
+        add_row({"Conteúdo / Bloco": f"QD PEIXE GORDO - {cl.upper()} - {region}", **{m: "" for m in months}})
         
         for prod in sorted(list(producers_by_classe[cl])):
             row_dict = {"Conteúdo / Bloco": prod}
+            t_row_dict = {"Conteúdo / Bloco": None}
             for m in months:
                 val = block_data[(cl, prod)][m]
                 row_dict[m] = val
+                t_row_dict[m] = tooltip_data[(cl, prod)][m]
                 totals[cl][m] += val
-            output_rows.append(row_dict)
+            add_row(row_dict, t_row_dict)
             
         t_dict = {"Conteúdo / Bloco": f"Total {cl}"}
+        # total_label = (
+        #     "Previsão de Disponibilidade Próprio" if cl == "Próprio"
+        #     else "Previsão de Disponibilidade Integração" if cl == "Integração"
+        #     else "Previsão de Disponibilidade Parceria" if cl == "Parceria"
+        #     else f"Total {cl}"
+        # )
+        # t_dict = {"Conteúdo / Bloco": total_label}
         for m in months: t_dict[m] = totals[cl][m]
-        output_rows.append(t_dict)
-        output_rows.append({col: "" for col in ["Conteúdo / Bloco"] + months})
+        add_row(t_dict)
+        add_row({col: "" for col in ["Conteúdo / Bloco"] + months})
 
     # Bloco: Totais e Metas
-    output_rows.append({"Conteúdo / Bloco": f"QUADRO DE PEIXE GORDO TOTAL - {region}", **{m: "" for m in months}})
+    add_row({"Conteúdo / Bloco": f"QD PEIXE GORDO TOTAL - {region}", **{m: "" for m in months}})
     
     prevs = {
         "Previsão de Abate Próprio": totals["Próprio"],
@@ -536,30 +769,32 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
     abate_po_mes = {m: po_diario[m] * dias_abate[m] for m in months}
 
     for label, data_dict in prevs.items():
-        output_rows.append({"Conteúdo / Bloco": label, **data_dict})
-    output_rows.append({"Conteúdo / Bloco": "Previsão Disponibilidade Total", **prev_total})
-    output_rows.append({"Conteúdo / Bloco": "Abate PO Atualizado Total Mês", **abate_po_mes})
-    output_rows.append({col: "" for col in ["Conteúdo / Bloco"] + months})
+        add_row({"Conteúdo / Bloco": label, **data_dict})
+    add_row({"Conteúdo / Bloco": "Previsão Disponibilidade Total", **prev_total})
+    add_row({"Conteúdo / Bloco": "Abate PO Atualizado Total Mês", **abate_po_mes})
+    add_row({col: "" for col in ["Conteúdo / Bloco"] + months})
 
     # Bloco: Disponibilidade por Dia
-    output_rows.append({"Conteúdo / Bloco": f"QUADRO DE DISPONIBILIDADE PARA O ABATE POR DIA - {region}", **{m: "" for m in months}})
+    add_row({"Conteúdo / Bloco": f"QD DISP P/ ABATE / DIA - {region}", **{m: "" for m in months}})
     
-    output_rows.append({"Conteúdo / Bloco": "Dias de Abate", **dias_abate})
+    add_row({"Conteúdo / Bloco": "Dias de Abate", **dias_abate})
     
     kg_dia_total = {m: prev_total[m] / dias_abate[m] for m in months}
-    output_rows.append({"Conteúdo / Bloco": "Kg/Dia Próprio", **{m: prevs["Previsão de Abate Próprio"][m] / dias_abate[m] for m in months}})
-    output_rows.append({"Conteúdo / Bloco": "Kg/Dia Integração", **{m: prevs["Previsão de Abate Integração"][m] / dias_abate[m] for m in months}})
-    output_rows.append({"Conteúdo / Bloco": "Kg/Dia Parceria", **{m: prevs["Previsão de Abate Parceria"][m] / dias_abate[m] for m in months}})
-    output_rows.append({"Conteúdo / Bloco": "Total Kg/Dia Disponível Abate", **kg_dia_total})
-    output_rows.append({col: "" for col in ["Conteúdo / Bloco"] + months})
+    add_row({"Conteúdo / Bloco": "Kg/Dia Próprio", **{m: prevs["Previsão de Abate Próprio"][m] / dias_abate[m] for m in months}})
+    add_row({"Conteúdo / Bloco": "Kg/Dia Integração", **{m: prevs["Previsão de Abate Integração"][m] / dias_abate[m] for m in months}})
+    add_row({"Conteúdo / Bloco": "Kg/Dia Parceria", **{m: prevs["Previsão de Abate Parceria"][m] / dias_abate[m] for m in months}})
+    add_row({"Conteúdo / Bloco": "Total Kg/Dia Disponível Abate", **kg_dia_total})
+    add_row({col: "" for col in ["Conteúdo / Bloco"] + months})
 
     # Bloco: Saldos
-    output_rows.append({"Conteúdo / Bloco": f"QUADRO DO SALDO DA DISPONIBILIDADE PARA O ABATE POR DIA e POR MÊS - {region}", **{m: "" for m in months}})
+    add_row({"Conteúdo / Bloco": f"QD SALDO DISP P/ ABATE / DIA e / MÊS - {region}", **{m: "" for m in months}})
     
     saldo_dia = {m: kg_dia_total[m] - po_diario[m] for m in months}
     
-    output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **po_diario})
-    output_rows.append({"Conteúdo / Bloco": "Saldo Atualizado / dia", **saldo_dia})
+    add_row({"Conteúdo / Bloco": "PO Atualizado", **po_diario})
+    # Linha PO mantida comentada para poder ser reativada futuramente nas abas regionais APT/ITA.
+    # add_row({"Conteúdo / Bloco": "PO", **po_diario})
+    add_row({"Conteúdo / Bloco": "Saldo Atualizado / dia", **saldo_dia})
 
     df_saldo_mes = pd.DataFrame({"Mês": months})
     df_saldo_mes["Região"] = region
@@ -573,9 +808,9 @@ def process_regional_data(df: pd.DataFrame, region: str, df_metas: pd.DataFrame,
     )
     saldo_acm = df_saldo_mes.set_index("Mês")["Saldo Acm Atualizado / mês"].to_dict()
         
-    output_rows.append({"Conteúdo / Bloco": "Saldo Acm Atualizado / mês", **saldo_acm})
+    add_row({"Conteúdo / Bloco": "Saldo Acm Atualizado / mês", **saldo_acm})
 
-    return pd.DataFrame(output_rows)
+    return pd.DataFrame(output_rows), pd.DataFrame(tooltip_rows)
 
 
 @st.cache_data(show_spinner=False)
@@ -605,13 +840,13 @@ def process_consolidated_data(
 
     def title_row(label: str, availability: str, period: str, region: str) -> dict[str, object]:
         availability_parts = (
-            ["DISPONIBILIDADE", "DE BIOMASSA"]
-            if normalize_label(availability) == "disponibilidade de biomassa"
+            ["DISP", "BIOMASSA"]
+            if normalize_label(availability) == "disp biomassa"
             else [availability.upper()]
         )
         return {
             "Conteúdo / Bloco": label,
-            **title_cells(["QUADRO DE", *availability_parts, f"PARA O ABATE {period.upper()}", region.upper()]),
+            **title_cells(["QD", *availability_parts, f"P/ O ABATE {period.upper()}", region.upper()]),
         }
 
     def row_values(source: pd.DataFrame, label: str) -> dict[str, float]:
@@ -627,6 +862,13 @@ def process_consolidated_data(
             values[m] = 0.0 if pd.isna(value) else float(value)
         return values
 
+    def row_values_or_fallback(source: pd.DataFrame, label: str, fallback_label: str) -> dict[str, float]:
+        if source.empty or "Conteúdo / Bloco" not in source.columns:
+            return {m: 0.0 for m in months}
+        if source[source["Conteúdo / Bloco"] == label].empty:
+            return row_values(source, fallback_label)
+        return row_values(source, label)
+
     def sum_series(*series: dict[str, float]) -> dict[str, float]:
         return {m: sum(item.get(m, 0.0) for item in series) for m in months}
 
@@ -639,7 +881,7 @@ def process_consolidated_data(
     def weighted_avg_weight(region: str) -> dict[str, float]:
         ready = df[
             (df['regiao_calc'] == region)
-            & ((df['status'] == 'peixe pronto') | (df['peso_medio_g'] >= 900))
+            & (df['status'].str.lower() == 'peixe pronto')
         ].sort_values('data').drop_duplicates(
             subset=['produtor', 'tanque', 'mes'],
             keep='last',
@@ -660,7 +902,9 @@ def process_consolidated_data(
         "kg_integracao": row_values(df_apt, "Kg/Dia Integração"),
         "kg_parceria": row_values(df_apt, "Kg/Dia Parceria"),
         "total_dia": row_values(df_apt, "Total Kg/Dia Disponível Abate"),
-        "po": row_values(df_apt, "PO Atualizado"),
+        "po_atualizado": row_values(df_apt, "PO Atualizado"),
+        # A linha PO foi ocultada nas abas regionais; o consolidado preserva o valor interno pelo PO Atualizado.
+        "po": row_values_or_fallback(df_apt, "PO", "PO Atualizado"),
         "saldo_dia": row_values(df_apt, "Saldo Atualizado / dia"),
         "saldo_acm": row_values(df_apt, "Saldo Acm Atualizado / mês"),
         "total_mes": row_values(df_apt, "Previsão Disponibilidade Total"),
@@ -672,12 +916,30 @@ def process_consolidated_data(
         "kg_integracao": row_values(df_ita, "Kg/Dia Integração"),
         "kg_parceria": row_values(df_ita, "Kg/Dia Parceria"),
         "total_dia": row_values(df_ita, "Total Kg/Dia Disponível Abate"),
-        "po": row_values(df_ita, "PO Atualizado"),
+        "po_atualizado": row_values(df_ita, "PO Atualizado"),
+        # A linha PO foi ocultada nas abas regionais; o consolidado preserva o valor interno pelo PO Atualizado.
+        "po": row_values_or_fallback(df_ita, "PO", "PO Atualizado"),
         "saldo_dia": row_values(df_ita, "Saldo Atualizado / dia"),
         "saldo_acm": row_values(df_ita, "Saldo Acm Atualizado / mês"),
         "total_mes": row_values(df_ita, "Previsão Disponibilidade Total"),
         "peso_medio": weighted_avg_weight("ITA"),
     }
+    # Regra anterior para ITA:
+    # ita["total_dia"] = row_values(df_ita, "Total Kg/Dia Disponível Abate")
+    ita["total_dia"] = calcular_total_kg_dia_disponivel_abate(
+        ita["kg_proprio"],
+        ita["kg_integracao"],
+        ita["kg_parceria"],
+        months,
+    )
+    # Regra anterior para APT:
+    # apt["total_dia"] = row_values(df_apt, "Total Kg/Dia Disponível Abate")
+    apt["total_dia"] = calcular_total_kg_dia_disponivel_abate(
+        apt["kg_proprio"],
+        apt["kg_integracao"],
+        apt["kg_parceria"],
+        months,
+    )
 
     def regional_block(
         region_name: str,
@@ -692,11 +954,37 @@ def process_consolidated_data(
         output_rows.append({"Conteúdo / Bloco": "Kg/Dia Integração", **data["kg_integracao"]})
         output_rows.append({"Conteúdo / Bloco": "Kg/Dia Parceria", **data["kg_parceria"]})
         output_rows.append({"Conteúdo / Bloco": "Total Kg/Dia Dispon Abate", **data["total_dia"]})
-        output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **data["po"]})
-        output_rows.append({"Conteúdo / Bloco": "PO", **data["po"]})
+        output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **data["po_atualizado"]})
+        if region_code == "ITA":
+            # Regra anterior para ITA:
+            # po_regional = data["po_atualizado"]
+            po_regional = referenciar_po_regional(data["po"], months)
+        else:
+            po_regional = data["po"]
+        # output_rows.append({"Conteúdo / Bloco": "PO", **po_regional})
+        if region_code == "APT":
+            # Regras anteriores para APT:
+            # saldo_po_atual_disponivel = multiply_series(data["saldo_dia"], data["dias"])
+            # saldo_po_atual_disponivel = referenciar_saldo_acumulado_regional(data["saldo_acm"], months)
+            saldo_po_atual_disponivel = calcular_saldo_po_atual_disponivel_dia(
+                data["total_dia"],
+                data["po_atualizado"],
+                months,
+            )
+        elif region_code == "ITA":
+            # Regras anteriores para ITA:
+            # saldo_po_atual_disponivel = multiply_series(data["saldo_dia"], data["dias"])
+            # saldo_po_atual_disponivel = referenciar_saldo_atualizado_dia(data["saldo_dia"], months)
+            saldo_po_atual_disponivel = calcular_saldo_po_atual_disponivel_dia(
+                data["total_dia"],
+                data["po_atualizado"],
+                months,
+            )
+        else:
+            saldo_po_atual_disponivel = multiply_series(data["saldo_dia"], data["dias"])
         output_rows.append({
             "Conteúdo / Bloco": "Saldo PO Atual. x Disponível",
-            **multiply_series(data["saldo_dia"], data["dias"]),
+            **saldo_po_atual_disponivel,
         })
         output_rows.append({"Conteúdo / Bloco": "Peso Médio", **data["peso_medio"]})
         output_rows.append(empty_row())
@@ -705,40 +993,112 @@ def process_consolidated_data(
     regional_block("ITA", ita, availability="Disponibilidade de Biomassa", region_code="ITA")
 
     geral_total_dia = sum_series(apt["total_dia"], ita["total_dia"])
+    geral_po_atualizado = sum_series(apt["po_atualizado"], ita["po_atualizado"])
     geral_po = sum_series(apt["po"], ita["po"])
+    geral_saldo_atualizado_dia = diff_series(geral_total_dia, geral_po_atualizado)
     geral_saldo_dia = diff_series(geral_total_dia, geral_po)
-    geral_total_mes = sum_series(apt["total_mes"], ita["total_mes"])
-    geral_abate_po_mes = sum_series(
-        multiply_series(apt["po"], apt["dias"]),
-        multiply_series(ita["po"], ita["dias"]),
+    geral_saldo_acm_atualizado_dia = calcular_saldo_acumulado_dia(
+        geral_saldo_atualizado_dia,
+        months,
     )
-    geral_saldo_mes = diff_series(geral_total_mes, geral_abate_po_mes)
-    geral_dias_abate = apt["dias"]
-    df_geral_saldo_mes = pd.DataFrame({"Mês": months})
-    df_geral_saldo_mes["Grupo"] = "GERAL"
-    df_geral_saldo_mes["Saldo PO Atualizado"] = df_geral_saldo_mes["Mês"].map(geral_saldo_dia)
-    df_geral_saldo_mes["Dias de Abate"] = df_geral_saldo_mes["Mês"].map(geral_dias_abate)
-    df_geral_saldo_mes["Saldo Acm Atualizado / mês"] = calcular_saldo_acumulado_mes(
-        df_geral_saldo_mes,
-        col_saldo_dia="Saldo PO Atualizado",
-        col_dias_abate="Dias de Abate",
-        col_agrupamento="Grupo",
+    geral_saldo_acm_dia = calcular_saldo_acumulado_dia(
+        geral_saldo_dia,
+        months,
     )
-    geral_saldo_acm = df_geral_saldo_mes.set_index("Mês")["Saldo Acm Atualizado / mês"].to_dict()
+    # Regra anterior para "Total Kg/Mês Disponível Abate":
+    # geral_total_mes = sum_series(apt["total_mes"], ita["total_mes"])
+    geral_total_mes = calcular_total_kg_mes_disponivel_abate_consolidado(
+        apt["total_dia"],
+        apt["dias"],
+        ita["total_dia"],
+        ita["dias"],
+        months,
+    )
+    # Regra anterior para "PO Atualizado (No mês) Saldo":
+    # geral_abate_po_mes = sum_series(
+    #     multiply_series(apt["po"], apt["dias"]),
+    #     multiply_series(ita["po"], ita["dias"]),
+    # )
+    # geral_saldo_mes = diff_series(geral_total_mes, geral_abate_po_mes)
+    # geral_saldo_mes = calcular_po_atualizado_no_mes_saldo_consolidado(
+    #     geral_saldo_atualizado_dia,
+    #     ita["dias"],
+    #     months,
+    # )
+    geral_saldo_mes = calcular_po_atualizado_no_mes_saldo_consolidado(
+        apt["po_atualizado"],
+        apt["dias"],
+        ita["po_atualizado"],
+        ita["dias"],
+        months,
+    )
+    geral_po_mes = calcular_po_no_mes_saldo_consolidado(
+        apt["po"],
+        apt["dias"],
+        ita["po"],
+        ita["dias"],
+        months,
+    )
+    geral_saldo_po_atualizado_mes = calcular_saldo_po_mes_geral(
+        geral_total_mes,
+        geral_saldo_mes,
+        months,
+    )
+    geral_saldo_po_mes = calcular_saldo_po_mes_geral(
+        geral_total_mes,
+        geral_po_mes,
+        months,
+    )
+    geral_saldo_acum_atualizado_mes = calcular_saldo_acum_mes_geral(
+        geral_saldo_po_atualizado_mes,
+        months,
+    )
+    geral_saldo_acum_mes = calcular_saldo_acum_mes_geral(
+        geral_saldo_po_mes,
+        months,
+    )
+    
+    # Regra anterior do consolidado: recalculava o acumulado geral usando os dias de abate da APT.
+    # geral_dias_abate = apt["dias"]
+    # df_geral_saldo_mes = pd.DataFrame({"Mês": months})
+    # df_geral_saldo_mes["Grupo"] = "GERAL"
+    # df_geral_saldo_mes["Saldo PO Atualizado"] = df_geral_saldo_mes["Mês"].map(geral_saldo_dia)
+    # df_geral_saldo_mes["Dias de Abate"] = df_geral_saldo_mes["Mês"].map(geral_dias_abate)
+    # df_geral_saldo_mes["Saldo Acm Atualizado / mês"] = calcular_saldo_acumulado_mes(
+    #     df_geral_saldo_mes,
+    #     col_saldo_dia="Saldo PO Atualizado",
+    #     col_dias_abate="Dias de Abate",
+    #     col_agrupamento="Grupo",
+    # )
+    # geral_saldo_acm = df_geral_saldo_mes.set_index("Mês")["Saldo Acm Atualizado / mês"].to_dict()
+    # Regra anterior para "Saldo Acm Atualizado / mês":
+    # geral_saldo_acm = calcular_saldo_acumulado_consolidado(
+    #     apt["saldo_acm"],
+    #     ita["saldo_acm"],
+    #     months,
+    # )
 
-    output_rows.append(title_row("QUADRO DE", "Disponibilidade", "Dia", "GERAL"))
+    output_rows.append(title_row("QD", "Disponibilidade", "Dia", "GERAL"))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Dia Disponível Abate", **geral_total_dia})
-    output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **geral_po})
-    output_rows.append({"Conteúdo / Bloco": "PO", **geral_po})
-    output_rows.append({"Conteúdo / Bloco": "Saldo PO Atualizado", **geral_saldo_dia})
+    output_rows.append({"Conteúdo / Bloco": "PO Atualizado", **geral_po_atualizado})
+    # output_rows.append({"Conteúdo / Bloco": "PO", **geral_po})
+    output_rows.append({"Conteúdo / Bloco": "Saldo PO Atualizado", **geral_saldo_atualizado_dia})
     output_rows.append({"Conteúdo / Bloco": "Saldo PO", **geral_saldo_dia})
+    output_rows.append({"Conteúdo / Bloco": "Saldo Acm Atualizado / Dia", **geral_saldo_acm_atualizado_dia})
+    output_rows.append({"Conteúdo / Bloco": "Saldo Acm / Dia", **geral_saldo_acm_dia})
     output_rows.append(empty_row())
 
-    output_rows.append(title_row("QUADRO DE", "Disponibilidade", "Mês", "GERAL"))
+    output_rows.append(title_row("QD", "Disponibilidade", "Mês", "GERAL"))
     output_rows.append({"Conteúdo / Bloco": "Total Kg/Mês Disponível Abate", **geral_total_mes})
     output_rows.append({"Conteúdo / Bloco": "PO Atualizado (No mês) Saldo", **geral_saldo_mes})
-    output_rows.append({"Conteúdo / Bloco": "Saldo PO Atual. x Disponível", **geral_saldo_mes})
-    output_rows.append({"Conteúdo / Bloco": "Saldo Acm Atualizado / mês", **geral_saldo_acm})
+    # output_rows.append({"Conteúdo / Bloco": "PO (No Mês)", **geral_po_mes})
+    # Linhas antigas removidas do quadro mensal:
+    # output_rows.append({"Conteúdo / Bloco": "Saldo PO Atual. x Disponível", **geral_saldo_mes})
+    # output_rows.append({"Conteúdo / Bloco": "Saldo Acm Atualizado / mês", **geral_saldo_acm})
+    output_rows.append({"Conteúdo / Bloco": "Saldo PO Atualizado", **geral_saldo_po_atualizado_mes})
+    output_rows.append({"Conteúdo / Bloco": "Saldo PO", **geral_saldo_po_mes})
+    output_rows.append({"Conteúdo / Bloco": "Saldo Acum Atualizado / Mês", **geral_saldo_acum_atualizado_mes})
+    output_rows.append({"Conteúdo / Bloco": "Saldo Acum / Mês", **geral_saldo_acum_mes})
 
     return pd.DataFrame(output_rows)
 
@@ -747,7 +1107,7 @@ def build_next_generation_plantel(csv_bytes: bytes) -> bytes:
     df = clean_and_prepare_dataframe(csv_bytes)
     if df.empty or 'tanques_disponivel' not in df.columns:
         return b""
-    disponiveis = df[df['tanques_disponivel'] == 1].sort_values('data')
+    disponiveis = df[df['tanques_disponivel'] != ""].sort_values('data')
     if disponiveis.empty:
         output = pd.DataFrame(
             columns=[
@@ -837,7 +1197,7 @@ def auto_width_column_config(
         header = str(column)
         max_chars = max([visible_text_length(header), *df[column].map(visible_text_length).tolist()])
 
-        is_label_column = normalize_label(header) == "conteudo / bloco"
+        is_label_column = normalize_label(header) in ("conteudo / bloco", "metrica")
         has_numeric_values = any(is_display_numeric_value(value) for value in df[column].tolist())
 
         if is_label_column:
@@ -873,7 +1233,13 @@ def ultimo_valor_relevante(serie: pd.Series) -> float:
     return float(valores.iloc[-1])
 
 
-def render_line_chart(chart_df: pd.DataFrame, title: str, y_title: str) -> None:
+def render_line_chart(
+    chart_df: pd.DataFrame,
+    title: str,
+    y_title: str,
+    *,
+    selected_month: str | None = None,
+) -> None:
     """Renderiza gráficos com eixos explícitos para evitar leituras ambíguas."""
     if chart_df.empty:
         return
@@ -884,17 +1250,23 @@ def render_line_chart(chart_df: pd.DataFrame, title: str, y_title: str) -> None:
         chart_df.reset_index(names="Mês")
         .melt(id_vars="Mês", var_name="Indicador", value_name="Valor")
     )
-    chart = (
+    line_chart = (
         alt.Chart(chart_data)
-        .mark_line(point=True, strokeWidth=2.5)
+        .mark_line(point=alt.OverlayMarkDef(filled=True, size=72), strokeWidth=3.2)
         .encode(
             x=alt.X("Mês:O", title="Mês / Tempo", sort=None, axis=alt.Axis(labelAngle=0)),
             y=alt.Y("Valor:Q", title=y_title, scale=alt.Scale(zero=False)),
             color=alt.Color(
                 "Indicador:N",
                 title="Série",
-                scale=alt.Scale(range=[BRAND_GREEN, BRAND_GOLD, "rgba(23, 65, 59, 0.6)"]),
-                legend=alt.Legend(orient="bottom", direction="horizontal", titleFontSize=12, labelFontSize=12),
+                scale=alt.Scale(range=CHART_COLORS),
+                legend=alt.Legend(
+                    orient="bottom",
+                    direction="horizontal",
+                    titleFontSize=12,
+                    labelFontSize=12,
+                    symbolSize=140,
+                ),
             ),
             tooltip=[
                 alt.Tooltip("Mês:O", title="Mês"),
@@ -903,8 +1275,35 @@ def render_line_chart(chart_df: pd.DataFrame, title: str, y_title: str) -> None:
             ],
         )
         .properties(height=320)
-        .configure_axis(labelFontSize=12, titleFontSize=13)
-        .configure_legend(labelFontSize=12, titleFontSize=12)
+    )
+
+    chart = line_chart
+    if selected_month:
+        selected_data = chart_data[chart_data["Mês"].astype(str) == selected_month]
+        selected_rule = (
+            alt.Chart(pd.DataFrame({"Mês": [selected_month]}))
+            .mark_rule(color=BRAND_GOLD, strokeDash=[6, 4], strokeWidth=2, opacity=0.95)
+            .encode(x=alt.X("Mês:O", sort=None))
+        )
+        selected_points = (
+            alt.Chart(selected_data)
+            .mark_point(filled=False, size=190, strokeWidth=3)
+            .encode(
+                x=alt.X("Mês:O", title="Mês / Tempo", sort=None),
+                y=alt.Y("Valor:Q", title=y_title),
+                color=alt.Color("Indicador:N", scale=alt.Scale(range=CHART_COLORS), legend=None),
+                tooltip=[
+                    alt.Tooltip("Mês:O", title="Mês"),
+                    alt.Tooltip("Indicador:N", title="Série"),
+                    alt.Tooltip("Valor:Q", title=y_title, format=",.2f"),
+                ],
+            )
+        )
+        chart = alt.layer(line_chart, selected_rule, selected_points).properties(height=320)
+
+    chart = chart.configure_axis(labelFontSize=12, titleFontSize=13).configure_legend(
+        labelFontSize=12,
+        titleFontSize=12,
     )
     st.altair_chart(chart, use_container_width=True)
 
@@ -943,7 +1342,7 @@ def styled_report_dataframe(df: pd.DataFrame) -> pd.io.formats.style.Styler:
             return [
                 "background-color: #BC933F; color: #111827; font-weight: 900;"
             ] * size
-        if "quadro" in label:
+        if "qd" in label:
             return [
                 "background-color: rgba(23, 65, 59, 0.85); color: #FFFFFF; font-weight: 800;"
             ] * size
@@ -1006,8 +1405,10 @@ def render_report_dataframe(
     *,
     height: int,
     use_dark_theme: bool = False,
+    df_tooltips: pd.DataFrame | None = None,
 ) -> None:
     display_df = format_df_for_display(df)
+    display_tooltips = format_df_for_display(df_tooltips) if df_tooltips is not None else None
     column_config = auto_width_column_config(display_df)
 
     if not use_dark_theme:
@@ -1020,7 +1421,7 @@ def render_report_dataframe(
         return
 
     try:
-        styler = style_dark_regional_report(display_df)
+        styler = style_dark_regional_report(display_df, df_tooltips=display_tooltips)
     except ValueError as exc:
         st.warning(f"Nao foi possivel aplicar o tema escuro regional: {exc}")
         styler = styled_report_dataframe(display_df)
@@ -1096,9 +1497,14 @@ def render_management_inputs(
     data_inicio: date,
     num_meses: int = 12,
     parametros_bytes: bytes | None = None,
+    transferencias_bytes: bytes | None = None,
+    plantel_bytes: bytes | None = None,
     key_prefix: str = "management",
     save_path: Path | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    transferencias_save_path: Path | None = None,
+    peso_medio_df: pd.DataFrame | None = None,
+    biomassa_alvo_df: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
     st.divider()
     title_col, action_col = st.columns([0.74, 0.26])
     with title_col:
@@ -1108,45 +1514,189 @@ def render_management_inputs(
         save_action_slot = st.empty()
     saved_toast_key = f"{key_prefix}_parametros_saved_toast"
     if st.session_state.pop(saved_toast_key, False):
-        st.toast("parametros_gerenciais.csv salvo com sucesso.", icon="✅")
+        st.toast("Arquivos de entrada salvos com sucesso.", icon="✅")
     
-    df_metas_base, df_terceiros_base = parse_parametros_gerenciais(parametros_bytes or b"", data_inicio, num_meses)
+    df_metas_base, df_terceiros_legacy = parse_parametros_gerenciais(parametros_bytes or b"", data_inicio, num_meses)
+    df_transferencias_base = (
+        parse_terceiros_e_transferencias(transferencias_bytes)
+        if transferencias_bytes is not None
+        else legacy_terceiros_to_transferencias(df_terceiros_legacy)
+    )
     meses = df_metas_base["Mês"].tolist()
+    produtores_plantel, regioes_plantel = opcoes_plantel(plantel_bytes)
+    regioes_transferencias = valores_unicos_ordenados(
+        df_transferencias_base.get("Região Origem"),
+        df_transferencias_base.get("Região Destino"),
+    )
+    regioes_editor = valores_unicos_ordenados(["APT", "ITA"], regioes_plantel, regioes_transferencias)
+    produtores_editor = valores_unicos_ordenados(produtores_plantel, df_transferencias_base.get("Produtor"))
+    produtor_column_config = (
+        st.column_config.SelectboxColumn("Produtor", options=produtores_editor, required=True)
+        if produtores_editor
+        else st.column_config.TextColumn("Produtor", required=True)
+    )
         
-    col1, col2 = st.columns([1.1, 0.9])
+    col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("#### 1. Metas (PO) e Dias de Abate por Região")
+        st.markdown("#### 1. Metas (PO) e Dias de Abate por Região", help="Defina nesta tabela a meta volumétrica do plano operacional (PO) para abate e o total de dias úteis da indústria no mês. Estes valores servem como balizadores no relatório final para comparar o projetado contra o planejado.")
         df_metas_editado = st.data_editor(
             df_metas_base,
-            use_container_width=True,
+            use_container_width=False,
             hide_index=True,
             key=f"{key_prefix}_metas_editor_{data_inicio.isoformat()}_{hash(parametros_bytes)}",
             column_config={
                 "Mês": st.column_config.TextColumn("Mês", disabled=True),
-                "Dias Abate APT": st.column_config.NumberColumn("Dias Abate APT", min_value=1, step=1, format="%d"),
-                "PO Diário APT (kg)": st.column_config.NumberColumn("PO Diário APT (kg)", min_value=0, step=1000, format="%d"),
-                "Dias Abate ITA": st.column_config.NumberColumn("Dias Abate ITA", min_value=1, step=1, format="%d"),
-                "PO Diário ITA (kg)": st.column_config.NumberColumn("PO Diário ITA (kg)", min_value=0, step=1000, format="%d"),
+                "Dias Abate APT": st.column_config.NumberColumn("Dia Ab. APT", min_value=1, step=1, format="%d"),
+                "PO Diário APT (kg)": st.column_config.NumberColumn("PO D. APT (kg)", min_value=0, step=1000, format="%d"),
+                "Dias Abate ITA": st.column_config.NumberColumn("Dia Ab. ITA", min_value=1, step=1, format="%d"),
+                "PO Diário ITA (kg)": st.column_config.NumberColumn("PO D. ITA (kg)", min_value=0, step=1000, format="%d"),
             },
         )
 
     with col2:
-        st.markdown("#### 2. Volumes de Terceiros e Transferências")
-        df_terceiros_editado = st.data_editor(
-            df_terceiros_base,
+        st.markdown("#### 2. Volume de Terceiros e Transferencias", help="Insira volumes que vêm de fora do plantel principal, como compra de peixes de Terceiros, ou registre transferências (entradas e saídas de biomassa). Valores negativos em transferências representam biomassa saindo da região.")
+        df_transferencias_editado = st.data_editor(
+            df_transferencias_base,
+            num_rows="dynamic",
+            use_container_width=False,
+            hide_index=True,
+            column_config={
+                "Mês": st.column_config.SelectboxColumn("Mês", options=meses, required=True),
+                "Região Origem": st.column_config.SelectboxColumn("Origem", options=regioes_editor, required=True),
+                "Região Destino": st.column_config.SelectboxColumn("Destino", options=["APT", "ITA"], required=True),
+                "Classe": st.column_config.SelectboxColumn("Classe", options=["Próprio", "Integração", "Parceria"], required=True),
+                "Volume (kg)": st.column_config.NumberColumn("Vol. (kg)", required=True, step=1000, format="%d"),
+                "Produtor": produtor_column_config,
+            },
+            key=f"{key_prefix}_terceiros_transferencias_editor_{data_inicio.isoformat()}_{hash(transferencias_bytes)}"
+        )
+
+    st.divider()
+    
+    st.markdown("### Selecione a Base de Cálculo")
+    base_calculo = st.radio(
+        "O simulador preencherá automaticamente a tabela que não for selecionada.",
+        options=["Peso Médio Alvo", "Biomassa Alvo"],
+        horizontal=True,
+        key=f"{key_prefix}_base_calculo"
+    )
+    st.session_state["base_calculo"] = base_calculo
+
+    with st.expander("⚙️ Parâmetros da Simulação", expanded=(base_calculo == "Biomassa Alvo")):
+        col_p1, col_p2, col_p3 = st.columns(3)
+        with col_p1:
+            peso_minimo = st.number_input("Peso mínimo para despesca (g)", min_value=0, step=50, value=st.session_state.get("peso_minimo_biomassa", 750), key=f"{key_prefix}_peso_minimo")
+            semanas = st.number_input("Qtd de semanas no mês", min_value=1, step=1, value=st.session_state.get("semanas_no_mes", 4), key=f"{key_prefix}_semanas")
+        with col_p2:
+            carga_a = st.number_input("Capacidade da carga A (ton)", min_value=1.0, step=1.0, value=st.session_state.get("capacidade_carga_a_ton", 7.0), key=f"{key_prefix}_carga_a")
+            carga_b = st.number_input("Capacidade da carga B (ton)", min_value=1.0, step=1.0, value=st.session_state.get("capacidade_carga_b_ton", 10.0), key=f"{key_prefix}_carga_b")
+        with col_p3:
+            tolerancia = st.number_input("Margem de tolerância da carga (%)", min_value=0.0, step=1.0, value=st.session_state.get("margem_tolerancia_carga", 5.0), key=f"{key_prefix}_tolerancia")
+            
+        st.session_state["peso_minimo_biomassa"] = peso_minimo
+        st.session_state["semanas_no_mes"] = semanas
+        st.session_state["capacidade_carga_a_ton"] = carga_a
+        st.session_state["capacidade_carga_b_ton"] = carga_b
+        st.session_state["margem_tolerancia_carga"] = tolerancia
+
+        # AUTO-SAVE Config
+        if "loaded_input_dir" in st.session_state and st.session_state["loaded_input_dir"]:
+            try:
+                cfg_path = st.session_state["loaded_input_dir"] / "config_simulacao.csv"
+                pd.DataFrame([{
+                    "peso_minimo_biomassa": peso_minimo,
+                    "semanas_no_mes": semanas,
+                    "capacidade_carga_a_ton": carga_a,
+                    "capacidade_carga_b_ton": carga_b,
+                    "margem_tolerancia_carga": tolerancia,
+                }]).to_csv(cfg_path, sep=';', index=False, encoding='utf-8-sig')
+            except Exception:
+                pass
+
+    def render_tabela_peso_medio(index: int, disabled: bool) -> pd.DataFrame:
+        st.markdown(f"#### {index}. Peso Médio Alvo por Produtor", help="Configure o peso de despesca esperado para cada produtor. O simulador só classificará os lotes como 'Peixe Pronto' quando o peso médio de cultivo ultrapassar o alvo definido aqui para aquele produtor naquele mês.")
+        if disabled:
+            st.info("🔒 **Bloqueado para Edição:** Os valores desta tabela serão gerados automaticamente pela simulação com base na Biomassa Alvo informada.")
+        
+        if peso_medio_df is None or peso_medio_df.empty:
+            pm_df = pd.DataFrame(columns=["Produtor"] + meses)
+        else:
+            pm_df = peso_medio_df.copy()
+            for m in meses:
+                if m not in pm_df.columns:
+                    pm_df[m] = ""
+            pm_df = pm_df[["Produtor"] + meses]
+            
+        peso_medio_col_config = {
+            "Produtor": produtor_column_config,
+        }
+        for m in meses:
+            peso_medio_col_config[m] = st.column_config.NumberColumn(m, min_value=0, step=50, format="%d g")
+            
+        return st.data_editor(
+            pm_df,
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
-            column_config={
-                "Região Destino": st.column_config.SelectboxColumn("Região Destino", options=["APT", "ITA"], required=True),
-                "Classe": st.column_config.SelectboxColumn("Classe", options=["Próprio", "Integração", "Parceria"], required=True),
-                "Mês": st.column_config.SelectboxColumn("Mês", options=meses, required=True),
-                "Volume (kg)": st.column_config.NumberColumn("Volume (kg)", required=True, step=1000, format="%d"),
-                "Produtor": st.column_config.TextColumn("Produtor", required=True)
-            },
-            key=f"{key_prefix}_terceiros_editor_{data_inicio.isoformat()}_{hash(parametros_bytes)}"
+            column_config=peso_medio_col_config,
+            disabled=disabled,
+            key=f"{key_prefix}_peso_medio_editor",
         )
+
+    def render_tabela_biomassa(index: int, disabled: bool) -> pd.DataFrame:
+        st.markdown(f"#### {index}. Biomassa Alvo por Produtor (t)", help="Configure a biomassa alvo em toneladas para cada produtor.")
+        if disabled:
+            st.info("🔒 **Bloqueado para Edição:** Os valores desta tabela serão gerados automaticamente pela simulação com base no Peso Médio Alvo informado.")
+        
+        if biomassa_alvo_df is None or biomassa_alvo_df.empty:
+            bio_df = pd.DataFrame(columns=["Produtor"] + meses)
+        else:
+            bio_df = biomassa_alvo_df.copy()
+            for m in meses:
+                if m not in bio_df.columns:
+                    bio_df[m] = ""
+            bio_df = bio_df[["Produtor"] + meses]
+            
+        biomassa_alvo_col_config = {
+            "Produtor": produtor_column_config,
+        }
+        for m in meses:
+            biomassa_alvo_col_config[m] = st.column_config.NumberColumn(m, min_value=0.0, step=10.0, format="%.1f t")
+            
+        return st.data_editor(
+            bio_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config=biomassa_alvo_col_config,
+            disabled=disabled,
+            key=f"{key_prefix}_biomassa_alvo_editor",
+        )
+
+    if base_calculo == "Peso Médio Alvo":
+        df_peso_medio_editado = render_tabela_peso_medio(3, False)
+        df_biomassa_alvo_editado = render_tabela_biomassa(4, True)
+    else:
+        df_biomassa_alvo_editado = render_tabela_biomassa(3, False)
+        df_peso_medio_editado = render_tabela_peso_medio(4, True)
+    
+    produtores_na_tabela_pm = set(df_peso_medio_editado["Produtor"].dropna().astype(str).str.strip().str.upper())
+    produtores_na_tabela_pm.discard("")
+    produtores_na_tabela_bio = set(df_biomassa_alvo_editado["Produtor"].dropna().astype(str).str.strip().str.upper())
+    produtores_na_tabela_bio.discard("")
+    
+    produtores_faltantes_pm = [p for p in produtores_editor if p.strip().upper() not in produtores_na_tabela_pm]
+    produtores_faltantes_bio = [p for p in produtores_editor if p.strip().upper() not in produtores_na_tabela_bio]
+
+    if base_calculo == "Peso Médio Alvo" and produtores_faltantes_pm:
+        st.error(f"Falta definir o Peso Médio Alvo para os produtores: {', '.join(produtores_faltantes_pm)}. A simulação será bloqueada até que todos sejam preenchidos.")
+        st.session_state["bloquear_simulacao"] = True
+    elif base_calculo == "Biomassa Alvo" and produtores_faltantes_bio:
+        st.error(f"Falta definir a Biomassa Alvo para os produtores: {', '.join(produtores_faltantes_bio)}. A simulação será bloqueada até que todos sejam preenchidos.")
+        st.session_state["bloquear_simulacao"] = True
+    else:
+        st.session_state["bloquear_simulacao"] = False
 
     meses_visiveis = st.multiselect(
         "Meses exibidos no relatório da tela",
@@ -1158,15 +1708,52 @@ def render_management_inputs(
     if not meses_visiveis:
         meses_visiveis = meses
 
-    parametros_csv = parametros_gerenciais_to_csv(df_metas_editado, df_terceiros_editado)
-    st.download_button(
-        "📥 Baixar parâmetros gerenciais atualizados",
-        data=parametros_csv,
-        file_name=PARAMETROS_FILE,
-        mime="text/csv",
-        use_container_width=True,
-        key=f"{key_prefix}_download_parametros_gerenciais",
-    )
+    df_transferencias_editado = limpar_origem_terceiros(df_transferencias_editado)
+    st.session_state["meses_visiveis"] = list(meses_visiveis)
+    
+    parametros_csv = parametros_gerenciais_to_csv(df_metas_editado, pd.DataFrame(columns=TERCEIROS_COLUMNS))
+    transferencias_csv = terceiros_e_transferencias_to_csv(df_transferencias_editado)
+    peso_medio_csv = peso_medio_overrides_to_csv(df_peso_medio_editado, meses)
+    biomassa_alvo_csv = biomassa_alvo_to_csv(df_biomassa_alvo_editado, meses)
+    
+    dl_c1, dl_c2, dl_c3, dl_c4 = st.columns(4)
+    with dl_c1:
+        st.download_button(
+            "📥 Baixar parâmetros gerenciais",
+            data=parametros_csv,
+            file_name=PARAMETROS_FILE,
+            mime="text/csv",
+            use_container_width=True,
+            key=f"{key_prefix}_download_parametros_gerenciais",
+        )
+    with dl_c2:
+        st.download_button(
+            "📥 Baixar terceiros e transferências",
+            data=transferencias_csv,
+            file_name=TERCEIROS_TRANSFERENCIAS_FILE,
+            mime="text/csv",
+            use_container_width=True,
+            key=f"{key_prefix}_download_terceiros",
+        )
+    with dl_c3:
+        st.download_button(
+            "📥 Baixar peso médio dos produtores",
+            data=peso_medio_csv,
+            file_name="peso_medio_produtor.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key=f"{key_prefix}_download_peso_medio",
+        )
+    with dl_c4:
+        st.download_button(
+            "📥 Baixar biomassa alvo",
+            data=biomassa_alvo_csv,
+            file_name="biomassa_alvo.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key=f"{key_prefix}_download_biomassa_alvo",
+        )
+
     if save_path is not None:
         with save_action_slot.container():
             salvar_parametros = st.button(
@@ -1182,7 +1769,7 @@ def render_management_inputs(
                     color: rgba(49, 51, 63, 0.6);
                     line-height: 1.35;
                 ">
-                    Sobrescreve os dados no arquivo de parâmetros gerenciais com os dados alterados na tabela.
+                    Sobrescreve os arquivos de entrada com os dados alterados nas tabelas.
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -1190,24 +1777,43 @@ def render_management_inputs(
         if salvar_parametros:
             save_path.parent.mkdir(parents=True, exist_ok=True)
             save_path.write_bytes(parametros_csv)
+            if transferencias_save_path is not None:
+                transferencias_save_path.parent.mkdir(parents=True, exist_ok=True)
+                transferencias_save_path.write_bytes(transferencias_csv)
+            peso_medio_save_path = save_path.parent / "peso_medio_produtor.csv"
+            peso_medio_save_path.write_bytes(peso_medio_csv)
+            biomassa_alvo_save_path = save_path.parent / "biomassa_alvo.csv"
+            biomassa_alvo_save_path.write_bytes(biomassa_alvo_csv)
+
             st.session_state["df_metas"] = df_metas_editado.copy()
-            st.session_state["df_terceiros"] = df_terceiros_editado.copy()
+            st.session_state["df_terceiros"] = df_transferencias_editado.copy()
+            st.session_state["peso_medio_overrides"] = df_peso_medio_editado.copy()
+            st.session_state["biomassa_alvo"] = df_biomassa_alvo_editado.copy()
             st.session_state["meses_visiveis"] = list(meses_visiveis)
             st.session_state[f"{key_prefix}_parametros_file_mtime_ns"] = save_path.stat().st_mtime_ns
             st.session_state[f"{key_prefix}_parametros_override_bytes"] = parametros_csv
+            if transferencias_save_path is not None:
+                st.session_state[f"{key_prefix}_transferencias_file_mtime_ns"] = transferencias_save_path.stat().st_mtime_ns
+            st.session_state[f"{key_prefix}_transferencias_override_bytes"] = transferencias_csv
+            st.session_state[f"{key_prefix}_peso_medio_file_mtime_ns"] = peso_medio_save_path.stat().st_mtime_ns
             st.session_state[saved_toast_key] = True
             st.rerun()
 
-    return df_metas_editado, df_terceiros_editado, meses_visiveis
+    return df_metas_editado, df_transferencias_editado, df_peso_medio_editado, df_biomassa_alvo_editado, list(meses_visiveis)
 
 
 def render_validated_management_inputs(
     data_inicio: date,
     parametros_bytes: bytes | None,
+    transferencias_bytes: bytes | None,
+    plantel_bytes: bytes | None,
     key_prefix: str,
     save_path: Path | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, list[str]] | None:
-    if parametros_bytes is None:
+    transferencias_save_path: Path | None = None,
+    peso_medio_df: pd.DataFrame | None = None,
+    biomassa_alvo_df: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]] | None:
+    if parametros_bytes is None or transferencias_bytes is None:
         return None
 
     try:
@@ -1215,8 +1821,13 @@ def render_validated_management_inputs(
             data_inicio,
             num_meses=12,
             parametros_bytes=parametros_bytes,
+            transferencias_bytes=transferencias_bytes,
+            plantel_bytes=plantel_bytes,
             key_prefix=key_prefix,
             save_path=save_path,
+            transferencias_save_path=transferencias_save_path,
+            peso_medio_df=peso_medio_df,
+            biomassa_alvo_df=biomassa_alvo_df,
         )
     except ValueError as exc:
         st.error(f"parametros_gerenciais.csv invalido: {exc}")
@@ -1232,6 +1843,26 @@ def watch_parametros_gerenciais_file(path: Path, key_prefix: str) -> None:
 
     state_key = f"{key_prefix}_parametros_file_mtime_ns"
     toast_key = f"{key_prefix}_parametros_external_update_toast"
+    current_mtime = path.stat().st_mtime_ns
+    previous_mtime = st.session_state.get(state_key)
+
+    if previous_mtime is None:
+        st.session_state[state_key] = current_mtime
+        return
+
+    if current_mtime != previous_mtime:
+        st.session_state[state_key] = current_mtime
+        st.session_state[toast_key] = True
+        st.rerun()
+
+
+@st.fragment(run_every="2s")
+def watch_terceiros_transferencias_file(path: Path, key_prefix: str) -> None:
+    if not path.exists():
+        return
+
+    state_key = f"{key_prefix}_transferencias_file_mtime_ns"
+    toast_key = f"{key_prefix}_transferencias_external_update_toast"
     current_mtime = path.stat().st_mtime_ns
     previous_mtime = st.session_state.get(state_key)
 
@@ -1277,10 +1908,12 @@ def curvas_cluster_dataframe_from_path(path: Path) -> pd.DataFrame:
     rows = []
     for curva in curvas:
         cluster = str(curva.get("cluster", "") or "Curva padrão").strip() or "Curva padrão"
+        reg = str(curva.get("regiao", "")).strip().upper()
         rows.append(
             {
                 "Dia": int(curva["dia"]),
                 "Tipo de Curva": "Verão" if curva["estacao"] == "V" else "Inverno",
+                "Região": reg,
                 "Cluster": cluster,
                 "Peso Médio (g)": float(curva["peso_ref_g"]),
                 "GDP (g/dia)": float(curva["gdp_g"]),
@@ -1294,7 +1927,7 @@ def curvas_cluster_dataframe_from_path(path: Path) -> pd.DataFrame:
     ordem_tipo_curva = {"Inverno": 0, "Verão": 1}
     curvas_df["_ordem_tipo_curva"] = curvas_df["Tipo de Curva"].map(ordem_tipo_curva).fillna(2)
     return (
-        curvas_df.sort_values(["Dia", "_ordem_tipo_curva", "Cluster"])
+        curvas_df.sort_values(["Dia", "_ordem_tipo_curva", "Região", "Cluster"])
         .drop(columns="_ordem_tipo_curva")
         .reset_index(drop=True)
     )
@@ -1315,7 +1948,7 @@ def render_curve_programs_preview(curvas_df: pd.DataFrame) -> None:
         display_df = curvas_df.copy()
         display_df["_ordem_tipo_curva"] = display_df["Tipo de Curva"].map({"Inverno": 0, "Verão": 1}).fillna(2)
         display_df = (
-            display_df.sort_values(["Dia", "_ordem_tipo_curva", "Cluster"])
+            display_df.sort_values(["Dia", "_ordem_tipo_curva", "Região", "Cluster"])
             .drop(columns="_ordem_tipo_curva")
             .reset_index(drop=True)
         )
@@ -1332,6 +1965,7 @@ def render_curve_programs_preview(curvas_df: pd.DataFrame) -> None:
 # GERAÇÃO DO DASHBOARD E INTERFACE PRINCIPAL
 # ==========================================
 
+
 def render_excel_style_view(csv_bytes: bytes) -> None:
     st.subheader("📋 Relatório Corporativo de Projeção de Abate")
     st.caption("Visões estruturadas por blocos e regiões (Idêntico ao modelo Excel de controle).")
@@ -1346,6 +1980,8 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
     if meses_visiveis:
         df_metas = df_metas[df_metas["Mês"].isin(meses_visiveis)].copy()
         if df_terceiros is not None and not df_terceiros.empty:
+            if "Mês" not in df_terceiros.columns and "Data" in df_terceiros.columns:
+                df_terceiros = df_terceiros.rename(columns={"Data": "Mês"})
             df_terceiros = df_terceiros[df_terceiros["Mês"].isin(meses_visiveis)].copy()
         
     with st.spinner("Processando base de dados com Pandas..."):
@@ -1355,9 +1991,10 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
             st.error("Falha ao analisar a base de dados. Verifique a estrutura do CSV gerado.")
             return
 
-        df_apt_raw = process_regional_data(df_base, "APT", df_metas, df_terceiros)
-        df_ita_raw = process_regional_data(df_base, "ITA", df_metas, df_terceiros)
+        df_apt_raw, tooltip_apt_raw = process_regional_data(df_base, "APT", df_metas, df_terceiros)
+        df_ita_raw, tooltip_ita_raw = process_regional_data(df_base, "ITA", df_metas, df_terceiros)
         df_consolidado_raw = process_consolidated_data(df_base, df_apt_raw, df_ita_raw, df_metas)
+        df_er_diario, df_er_semanal, df_er_mensal = process_esperado_realizado()
     
     excel_bytes = export_to_excel(df_apt_raw, df_ita_raw, df_consolidado_raw)
     
@@ -1377,9 +2014,11 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
             mime="text/csv",
             use_container_width=True,
         )
+        
+    # (Painel unificado removido conforme solicitado na Etapa 1)
     
-    tab_apt, tab_ita, tab_consolidado = st.tabs(
-        ["🏭 APT (Aparecida do Taboado)", "🏭 ITA (Itaporã)", "📊 Consolidado APT + ITA"]
+    tab_apt, tab_ita, tab_consolidado, tab_esperado_realizado, tab_sobras = st.tabs(
+        ["🏭 APT", "🏭 ITA", "📊 Consolidado APT + ITA", "🎯 Esperado x Realizado", "📦 Sobras x Faltas"]
     )
     with tab_apt:
         chart_apt = dataframe_for_chart(
@@ -1388,7 +2027,7 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
         )
         if not chart_apt.empty:
             render_line_chart(chart_apt, "APT - Biomassa disponível x PO mensal", "Biomassa / abate projetado (kg)")
-        render_report_dataframe(df_apt_raw, height=550, use_dark_theme=True)
+        render_report_dataframe(df_apt_raw, height=550, use_dark_theme=True, df_tooltips=tooltip_apt_raw)
     with tab_ita:
         chart_ita = dataframe_for_chart(
             df_ita_raw,
@@ -1396,21 +2035,44 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
         )
         if not chart_ita.empty:
             render_line_chart(chart_ita, "ITA - Biomassa disponível x PO mensal", "Biomassa / abate projetado (kg)")
-        render_report_dataframe(df_ita_raw, height=550, use_dark_theme=True)
+        render_report_dataframe(df_ita_raw, height=550, use_dark_theme=True, df_tooltips=tooltip_ita_raw)
     with tab_consolidado:
         chart_consolidado = dataframe_for_chart(
             df_consolidado_raw,
             [
                 "Total Kg/Mês Disponível Abate",
                 "PO Atualizado (No mês) Saldo",
-                "Saldo Acm Atualizado / mês",
+                "Saldo Acum Atualizado / Mês",
             ],
         )
         if not chart_consolidado.empty:
-            metric_cols = st.columns(3)
-            for col, label in zip(metric_cols, chart_consolidado.columns[:3]):
-                col.metric(label, format_br_number(ultimo_valor_relevante(chart_consolidado[label]), 0))
-            render_line_chart(chart_consolidado, "Consolidado APT + ITA", "Valor consolidado")
+            meses_consolidado = [str(mes) for mes in chart_consolidado.index]
+            mes_atual = date.today().strftime("%Y-%m")
+            mes_padrao_idx = meses_consolidado.index(mes_atual) if mes_atual in meses_consolidado else len(meses_consolidado) - 1
+
+            # Código anterior: exibia sempre o último valor relevante de cada série.
+            # metric_cols = st.columns(3)
+            # for col, label in zip(metric_cols, chart_consolidado.columns[:3]):
+            #     col.metric(label, format_br_number(ultimo_valor_relevante(chart_consolidado[label]), 0))
+
+            card_col_1, card_col_2, card_col_3, selector_col = st.columns([1, 1, 1, 0.58])
+            with selector_col:
+                mes_selecionado = st.selectbox(
+                    "Mês",
+                    options=meses_consolidado,
+                    index=mes_padrao_idx,
+                    key="consolidado_mes_cards",
+                )
+
+            for col, label in zip([card_col_1, card_col_2, card_col_3], chart_consolidado.columns[:3]):
+                valor_mes = chart_consolidado.loc[mes_selecionado, label]
+                col.metric(label, format_br_number(valor_mes, 0))
+            render_line_chart(
+                chart_consolidado,
+                "Consolidado APT + ITA",
+                "Valor consolidado",
+                selected_month=mes_selecionado,
+            )
         display_consolidado = format_df_for_display(df_consolidado_raw)
         st.dataframe(
             style_consolidado_dataframe(display_consolidado, label_column="Conteúdo / Bloco"),
@@ -1418,6 +2080,165 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
             height=720,
             column_config=auto_width_column_config(display_consolidado, min_width=132),
         )
+
+    with tab_esperado_realizado:
+        st.markdown("### 🎯 Comparativo Esperado x Realizado")
+        st.caption("Visão transposta: métricas nas linhas e períodos nas colunas.")
+        
+        # Filtros exclusivos para essa aba
+        er_col1, er_col2 = st.columns([1, 3])
+        with er_col1:
+            periodos_opcoes = {
+                "Últimos 3 períodos": 3,
+                "Últimos 6 períodos": 6,
+                "Últimos 12 períodos": 12,
+                "Todos": None
+            }
+            er_filtro = st.selectbox("Limitar visualização a:", list(periodos_opcoes.keys()), index=1)
+            num_periodos = periodos_opcoes[er_filtro]
+            
+        def apply_er_filter(df: pd.DataFrame, n: int | None) -> pd.DataFrame:
+            if n is None or df.empty:
+                return df
+            cols = list(df.columns)
+            return df[cols[0:1] + cols[1:n+1]]
+            
+        df_er_mensal_filtrado = apply_er_filter(df_er_mensal, num_periodos)
+        df_er_semanal_filtrado = apply_er_filter(df_er_semanal, num_periodos)
+        df_er_diario_filtrado = apply_er_filter(df_er_diario, num_periodos)
+        
+        def er_column_config(df_er):
+            cfg = { "Métrica": st.column_config.Column("Métrica", width=200, alignment="left") }
+            for col in df_er.columns:
+                if col != "Métrica":
+                    cfg[col] = st.column_config.Column(col, alignment="center")
+            return cfg
+
+        st.markdown("#### 📅 Visão Mensal")
+        if not df_er_mensal_filtrado.empty:
+            st.dataframe(
+                style_esperado_realizado_dataframe(df_er_mensal_filtrado, hide_index=True, pattern_name="C"),
+                use_container_width=True,
+                hide_index=True,
+                column_config=er_column_config(df_er_mensal_filtrado)
+            )
+        else:
+            st.info("Nenhum dado mensal disponível.")
+            
+        st.markdown("#### 📆 Visão Semanal")
+        if not df_er_semanal_filtrado.empty:
+            st.dataframe(
+                style_esperado_realizado_dataframe(df_er_semanal_filtrado, hide_index=True, pattern_name="B"),
+                use_container_width=True,
+                hide_index=True,
+                column_config=er_column_config(df_er_semanal_filtrado)
+            )
+        else:
+            st.info("Nenhum dado semanal disponível.")
+            
+        st.markdown("#### 🗓️ Visão Diária")
+        if not df_er_diario_filtrado.empty:
+            st.dataframe(
+                style_esperado_realizado_dataframe(df_er_diario_filtrado, hide_index=True, pattern_name="A"),
+                use_container_width=True,
+                hide_index=True,
+                column_config=er_column_config(df_er_diario_filtrado)
+            )
+        else:
+            st.info("Nenhum dado diário disponível.")
+
+    with tab_sobras:
+        st.markdown("### 📦 Sobras x Faltas de Biomassa")
+        st.caption("Visão do que foi disponibilizado, recebido e as respectivas sobras no tanque ou faltas de cumprimento da meta (mês a mês).")
+        st.info("💡 **Dica:** Selecione uma linha na tabela abaixo para detalhar a composição dos tanques.")
+        
+        last_artifact = st.session_state.get("last_artifact")
+        if last_artifact and last_artifact.output_path:
+            log_dir = Path(last_artifact.output_path).parent / "log_auditoria"
+            sf_path = log_dir / "sobras_faltas.csv"
+            detalhe_path = log_dir / "detalhe_sobras_faltas.csv"
+            
+            if sf_path.exists() and detalhe_path.exists():
+                df_sf = pd.read_csv(sf_path, sep=';', encoding='utf-8-sig')
+                df_detalhe = pd.read_csv(detalhe_path, sep=';', encoding='utf-8-sig')
+                df_sf = pd.read_csv(sf_path, sep=';', encoding='utf-8-sig', decimal=',')
+                df_detalhe = pd.read_csv(detalhe_path, sep=';', encoding='utf-8-sig', decimal=',')
+                
+                if not df_sf.empty:
+                    # Render the interactive dataframe
+                    event = st.dataframe(
+                        style_sobras_faltas_dataframe(df_sf),
+                        use_container_width=True, 
+                        hide_index=True,
+                        selection_mode="single-row",
+                        on_select="rerun"
+                    )
+                    
+                    selected_rows = event.selection.rows
+                    if selected_rows:
+                        row_idx = selected_rows[0]
+                        selected_mes = df_sf.iloc[row_idx]["Mês"]
+                        selected_produtor = df_sf.iloc[row_idx]["Produtor"]
+                        
+                        st.markdown(f"#### 🔍 Detalhamento — {selected_mes} | {selected_produtor}")
+                        
+                        # Filter details
+                        df_d = df_detalhe[(df_detalhe["Mês"] == selected_mes) & (df_detalhe["Produtor de Origem"] == selected_produtor)]
+                        
+                        if df_d.empty:
+                            st.info("Nenhum tanque disponível ou alocado para este produtor no mês selecionado.")
+                        else:
+                            t_disp, t_prop, t_terc, t_tot, t_sob = st.tabs([
+                                "Disponível", "Alocação Própria", "Alocação p/ Terceiros", "Alocação Total", "Sobra de Biomassa Pronta"
+                            ])
+                            
+                            # Common formatting
+                            def _format_detalhe(df_to_style):
+                                # Appends " t" to the numeric columns
+                                def _fmt_t(v):
+                                    try:
+                                        return f"{float(v)/1000:,.1f} t".replace(",", "_").replace(".", ",").replace("_", ".")
+                                    except:
+                                        return v
+                                formatters = {c: _fmt_t for c in df_to_style.columns if c != "Tanque" and c != "Produtor de Destino"}
+                                return df_to_style.style.format(formatters)
+                            
+                            with t_disp:
+                                st.write("Tanques que compõem a biomassa **Disponível** neste mês.")
+                                df_disp = df_d[["Tanque", "Biomassa disponível do tanque"]].drop_duplicates(subset=["Tanque"])
+                                st.dataframe(_format_detalhe(df_disp), use_container_width=True, hide_index=True)
+                                st.caption(f"**Soma:** {df_disp['Biomassa disponível do tanque'].sum() / 1000:,.1f} t".replace(",", "_").replace(".", ",").replace("_", "."))
+                                
+                            with t_prop:
+                                st.write("Tanques alocados para o **próprio produtor**.")
+                                df_prop = df_d[df_d["Biomassa alocada para o próprio produtor"] > 0][["Tanque", "Biomassa alocada para o próprio produtor"]]
+                                st.dataframe(_format_detalhe(df_prop), use_container_width=True, hide_index=True)
+                                st.caption(f"**Soma:** {df_prop['Biomassa alocada para o próprio produtor'].sum() / 1000:,.1f} t".replace(",", "_").replace(".", ",").replace("_", "."))
+                                
+                            with t_terc:
+                                st.write("Tanques alocados para **terceiros**.")
+                                df_terc = df_d[df_d["Biomassa alocada para terceiros"] > 0][["Tanque", "Produtor de Destino", "Biomassa alocada para terceiros"]]
+                                st.dataframe(_format_detalhe(df_terc), use_container_width=True, hide_index=True)
+                                st.caption(f"**Soma:** {df_terc['Biomassa alocada para terceiros'].sum() / 1000:,.1f} t".replace(",", "_").replace(".", ",").replace("_", "."))
+                                
+                            with t_tot:
+                                st.write("Todos os tanques utilizados na **Alocação Total**.")
+                                df_tot = df_d[df_d["Alocação Total do tanque"] > 0][["Tanque", "Biomassa alocada para o próprio produtor", "Biomassa alocada para terceiros", "Alocação Total do tanque"]]
+                                st.dataframe(_format_detalhe(df_tot), use_container_width=True, hide_index=True)
+                                st.caption(f"**Soma:** {df_tot['Alocação Total do tanque'].sum() / 1000:,.1f} t".replace(",", "_").replace(".", ",").replace("_", "."))
+                                
+                            with t_sob:
+                                st.write("Tanques com **Sobra de Biomassa Pronta** após as alocações.")
+                                df_sob = df_d[df_d["Biomassa restante/sobra do tanque"] > 0][["Tanque", "Biomassa restante/sobra do tanque"]].drop_duplicates(subset=["Tanque"])
+                                st.dataframe(_format_detalhe(df_sob), use_container_width=True, hide_index=True)
+                                st.caption(f"**Soma:** {df_sob['Biomassa restante/sobra do tanque'].sum() / 1000:,.1f} t".replace(",", "_").replace(".", ",").replace("_", "."))
+                            
+                else:
+                    st.info("Nenhum desvio ou interação registrado.")
+            else:
+                st.info("Log de sobras/faltas ou detalhamento não encontrado. Pode ser que a simulação rodou sem metas.")
+        else:
+            st.info("Rode a simulação primeiro.")
 
 def render_common_settings() -> tuple[date, str, bool]:
     st.subheader("Configurações da simulação")
@@ -1448,14 +2269,97 @@ def run_simulation(config: SimulationConfig) -> tuple[Path, str]:
         input_dir=str(config.input_dir), plantel=config.plantel,
         tanques=config.tanques, curvas=config.curvas, racao=config.racao,
         parametros_gerenciais=config.parametros_gerenciais,
+        terceiros_e_transferencias=config.terceiros_e_transferencias,
         output=str(output_path), mostrar_erros=config.mostrar_erros,
         data_relatorio=config.data_relatorio.strftime("%d/%m/%Y"),
+        peso_minimo_biomassa=config.peso_minimo_biomassa,
+        peso_maximo_biomassa=config.peso_maximo_biomassa,
     )
     with redirect_stdout(stdout_buffer):
         output_path = executar(args)
     return Path(output_path), stdout_buffer.getvalue().strip()
 
+
+def carregar_peso_medio_overrides_de_caminho(caminho: Path) -> pd.DataFrame:
+    if not caminho.exists():
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(caminho, sep=";", encoding="utf-8-sig", dtype=str)
+        df = df.replace(["None", "nan", "NaN"], "").fillna("")
+        if "Produtor" not in df.columns:
+            return pd.DataFrame()
+        return df
+    except Exception as e:
+        st.warning(f"Erro ao ler peso_medio_produtor.csv: {e}")
+        return pd.DataFrame()
+
+
+def peso_medio_overrides_to_csv(df_peso: pd.DataFrame, meses: list[str]) -> bytes:
+    if df_peso is None or df_peso.empty:
+        df = pd.DataFrame(columns=["Produtor"] + list(meses))
+    else:
+        df = df_peso.copy()
+        for m in meses:
+            if m not in df.columns:
+                df[m] = ""
+            else:
+                df[m] = df[m].apply(csv_numero_or_blank)
+        df = df[["Produtor"] + list(meses)]
+        
+    buffer = io.StringIO()
+    df.to_csv(buffer, sep=';', index=False, encoding='utf-8-sig')
+    return buffer.getvalue().encode('utf-8-sig')
+
+
+def carregar_biomassa_alvo_de_caminho(caminho: Path) -> pd.DataFrame:
+    if not caminho.exists():
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(caminho, sep=";", encoding="utf-8-sig", dtype=str)
+        df = df.replace(["None", "nan", "NaN"], "").fillna("")
+        if "Produtor" not in df.columns:
+            return pd.DataFrame()
+        return df
+    except Exception as e:
+        st.warning(f"Erro ao ler biomassa_alvo.csv: {e}")
+        return pd.DataFrame()
+
+
+def biomassa_alvo_to_csv(df_bio: pd.DataFrame, meses: list[str]) -> bytes:
+    if df_bio is None or df_bio.empty:
+        df = pd.DataFrame(columns=["Produtor"] + list(meses))
+    else:
+        df = df_bio.copy()
+        for m in meses:
+            if m not in df.columns:
+                df[m] = ""
+            else:
+                df[m] = df[m].apply(csv_numero_or_blank)
+        df = df[["Produtor"] + list(meses)]
+        
+    buffer = io.StringIO()
+    df.to_csv(buffer, sep=';', index=False, encoding='utf-8-sig')
+    return buffer.getvalue().encode('utf-8-sig')
+
+
 def main() -> None:
+    if "peso_medio_overrides" not in st.session_state:
+        default_path = RUNTIME_DIR / "data" / "input" / "peso_medio_produtor.csv"
+        st.session_state["peso_medio_overrides"] = carregar_peso_medio_overrides_de_caminho(default_path)
+        
+    if "biomassa_alvo" not in st.session_state:
+        default_path_bio = RUNTIME_DIR / "data" / "input" / "biomassa_alvo.csv"
+        st.session_state["biomassa_alvo"] = carregar_biomassa_alvo_de_caminho(default_path_bio)
+
+    if "base_calculo" not in st.session_state:
+        st.session_state["base_calculo"] = "Peso Médio Alvo"
+
+    if "peso_minimo_biomassa" not in st.session_state:
+        st.session_state["peso_minimo_biomassa"] = 700
+        
+    if "peso_maximo_biomassa" not in st.session_state:
+        st.session_state["peso_maximo_biomassa"] = 0
+
     configure_page()
     render_header()
 
@@ -1469,20 +2373,36 @@ def main() -> None:
     with tab_upload:
         col1, col2 = st.columns(2)
         with col1:
-            uploaded_files["plantel"] = st.file_uploader("plantel.csv", type=["csv"], key="u_plantel")
-            uploaded_files["curvas"] = st.file_uploader("curvas.csv", type=["csv"], key="u_curvas")
+            uploaded_files["plantel"] = st.file_uploader("plantel.csv", type=["csv"], key="u_plantel", help="Arquivo base contendo o inventário atual de lotes alojados na fazenda.")
+            uploaded_files["curvas"] = st.file_uploader("curvas.csv", type=["csv"], key="u_curvas", help="Tabelas de crescimento esperado, conversão alimentar e sobrevivência.")
         with col2:
-            uploaded_files["tanques"] = st.file_uploader("tanques.csv", type=["csv"], key="u_tanques")
-            uploaded_files["racao"] = st.file_uploader("racao.csv", type=["csv"], key="u_racao")
+            uploaded_files["tanques"] = st.file_uploader("tanques.csv", type=["csv"], key="u_tanques", help="Relação de todos os tanques físicos, suas áreas e volumes disponíveis.")
+            uploaded_files["racao"] = st.file_uploader("racao.csv", type=["csv"], key="u_racao", help="Cadastro de tipos de ração e seus custos unitários atualizados.")
         uploaded_files["parametros_gerenciais"] = st.file_uploader(
             "parametros_gerenciais.csv",
             type=["csv"],
             key="u_parametros_gerenciais",
-            help="Obrigatorio. Contem dias de abate, metas PO e transferencias.",
+            help="Obrigatorio. Contem dias de abate e metas PO.",
+        )
+        uploaded_files["terceiros_e_transferencias"] = st.file_uploader(
+            "terceiros_e_transferencias.csv",
+            type=["csv"],
+            key="u_terceiros_e_transferencias",
+            help="Obrigatorio. Contem volumes de terceiros e transferencias entre regioes.",
         )
         parametros_bytes = (
             uploaded_files["parametros_gerenciais"].getvalue()
             if uploaded_files.get("parametros_gerenciais") is not None
+            else None
+        )
+        transferencias_bytes = (
+            uploaded_files["terceiros_e_transferencias"].getvalue()
+            if uploaded_files.get("terceiros_e_transferencias") is not None
+            else None
+        )
+        plantel_bytes = (
+            uploaded_files["plantel"].getvalue()
+            if uploaded_files.get("plantel") is not None
             else None
         )
         if parametros_bytes is not None:
@@ -1491,11 +2411,22 @@ def main() -> None:
                 st.session_state["upload_parametros_source_hash"] = uploaded_hash
                 st.session_state.pop("upload_parametros_override_bytes", None)
             parametros_bytes = st.session_state.get("upload_parametros_override_bytes", parametros_bytes)
+        if transferencias_bytes is not None:
+            uploaded_hash = hash(transferencias_bytes)
+            if st.session_state.get("upload_transferencias_source_hash") != uploaded_hash:
+                st.session_state["upload_transferencias_source_hash"] = uploaded_hash
+                st.session_state.pop("upload_transferencias_override_bytes", None)
+            transferencias_bytes = st.session_state.get("upload_transferencias_override_bytes", transferencias_bytes)
         management_state = render_validated_management_inputs(
             data_relatorio,
             parametros_bytes,
+            transferencias_bytes,
+            plantel_bytes,
             key_prefix="upload",
             save_path=RUNTIME_DIR / "data" / "input" / PARAMETROS_FILE,
+            transferencias_save_path=RUNTIME_DIR / "data" / "input" / TERCEIROS_TRANSFERENCIAS_FILE,
+            peso_medio_df=st.session_state.get("peso_medio_overrides"),
+            biomassa_alvo_df=st.session_state.get("biomassa_alvo"),
         )
 
         if uploaded_files.get("curvas") is not None:
@@ -1507,32 +2438,53 @@ def main() -> None:
                 st.info(f"Não foi possível montar o comparativo de curvas: {exc}")
             
         missing = [f for k, f in REQUIRED_FILES.items() if uploaded_files.get(k) is None]
-        if missing or management_state is None:
-            if management_state is None and PARAMETROS_FILE not in missing:
+        if missing or management_state is None or st.session_state.get("bloquear_simulacao", False):
+            if management_state is None and not missing:
                 missing.append(PARAMETROS_FILE)
-            st.warning("Envie todos os arquivos obrigatórios: " + ", ".join(missing))
+            st.warning("Envie todos os arquivos obrigatórios e preencha as metas de peso médio para todos os produtores.")
             st.button("🚀 Executar Simulação", disabled=True, key="btn_up_disabled")
         else:
             if st.button("🚀 Executar Simulação", type="primary", key="btn_up_run"):
                 try:
-                    df_metas, df_terceiros, meses_visiveis = management_state
+                    df_metas, df_terceiros, df_peso_medio, df_biomassa_alvo, meses_visiveis = management_state
                     with tempfile.TemporaryDirectory() as temp_dir:
                         work_dir = Path(temp_dir)
                         for key, file_name in REQUIRED_FILES.items():
                             if key == "parametros_gerenciais":
                                 (work_dir / file_name).write_bytes(
-                                    parametros_gerenciais_to_csv(df_metas, df_terceiros)
+                                    parametros_gerenciais_to_csv(df_metas, pd.DataFrame(columns=TERCEIROS_COLUMNS))
+                                )
+                            elif key == "terceiros_e_transferencias":
+                                (work_dir / file_name).write_bytes(
+                                    terceiros_e_transferencias_to_csv(df_terceiros)
                                 )
                             else:
                                 (work_dir / file_name).write_bytes(uploaded_files[key].getbuffer())
+                        
+                        if df_peso_medio is not None:
+                            (work_dir / "peso_medio_produtor.csv").write_bytes(
+                                peso_medio_overrides_to_csv(df_peso_medio, meses_visiveis or df_metas["Mês"].tolist())
+                            )
+                        
+                        if df_biomassa_alvo is not None:
+                            (work_dir / "biomassa_alvo.csv").write_bytes(
+                                biomassa_alvo_to_csv(df_biomassa_alvo, meses_visiveis or df_metas["Mês"].tolist())
+                            )
                             
                         config = SimulationConfig(
                             input_dir=work_dir, plantel=REQUIRED_FILES["plantel"],
                             tanques=REQUIRED_FILES["tanques"], curvas=REQUIRED_FILES["curvas"],
                             racao=REQUIRED_FILES["racao"],
                             parametros_gerenciais=REQUIRED_FILES["parametros_gerenciais"],
+                            terceiros_e_transferencias=REQUIRED_FILES["terceiros_e_transferencias"],
                             output=output_name,
                             data_relatorio=data_relatorio, mostrar_erros=mostrar_erros,
+                            peso_minimo_biomassa=st.session_state.get("peso_minimo_biomassa", 750),
+                            peso_maximo_biomassa=0.0,
+                            semanas_no_mes=st.session_state.get("semanas_no_mes", 4),
+                            capacidade_carga_a_ton=st.session_state.get("capacidade_carga_a_ton", 7.0),
+                            capacidade_carga_b_ton=st.session_state.get("capacidade_carga_b_ton", 10.0),
+                            margem_tolerancia_carga=st.session_state.get("margem_tolerancia_carga", 5.0),
                         )
                         with st.spinner("Motor de Cálculo em Execução..."):
                             out_path, stdout = run_simulation(config)
@@ -1549,23 +2501,65 @@ def main() -> None:
         st.caption("Modo desenvolvedor: leitura direta do diretório local.")
         raw_input_dir = Path(st.text_input("Pasta 'input'", value=r".\data\input")).expanduser()
         input_dir = raw_input_dir if raw_input_dir.is_absolute() else RUNTIME_DIR / raw_input_dir
+        if "loaded_input_dir" not in st.session_state or st.session_state["loaded_input_dir"] != input_dir:
+            st.session_state["loaded_input_dir"] = input_dir
+            
+            # Load config_simulacao.csv if it exists
+            local_config_path = input_dir / "config_simulacao.csv"
+            if local_config_path.exists():
+                try:
+                    df_cfg = pd.read_csv(local_config_path, sep=';', encoding='utf-8-sig')
+                    if not df_cfg.empty:
+                        row = df_cfg.iloc[0]
+                        st.session_state["peso_minimo_biomassa"] = int(float(row.get("peso_minimo_biomassa", 750)))
+                        st.session_state["semanas_no_mes"] = int(float(row.get("semanas_no_mes", 4)))
+                        st.session_state["capacidade_carga_a_ton"] = float(row.get("capacidade_carga_a_ton", 7.0))
+                        st.session_state["capacidade_carga_b_ton"] = float(row.get("capacidade_carga_b_ton", 10.0))
+                        st.session_state["margem_tolerancia_carga"] = float(row.get("margem_tolerancia_carga", 5.0))
+                except Exception:
+                    pass
+                    
+            local_peso_medio_path = input_dir / "peso_medio_produtor.csv"
+            if local_peso_medio_path.exists():
+                st.session_state["peso_medio_overrides"] = carregar_peso_medio_overrides_de_caminho(local_peso_medio_path)
+            
+            local_biomassa_alvo_path = input_dir / "biomassa_alvo.csv"
+            if local_biomassa_alvo_path.exists():
+                st.session_state["biomassa_alvo"] = carregar_biomassa_alvo_de_caminho(local_biomassa_alvo_path)
+                
+            st.session_state.pop("unified_editor_rows", None)
+
         missing_local = [
             file_name for file_name in REQUIRED_FILES.values() if not (input_dir / file_name).exists()
         ]
         parametros_local = input_dir / REQUIRED_FILES["parametros_gerenciais"]
+        transferencias_local = input_dir / REQUIRED_FILES["terceiros_e_transferencias"]
         management_state = None
-        if parametros_local.exists():
+        if parametros_local.exists() and transferencias_local.exists():
             watch_parametros_gerenciais_file(parametros_local, key_prefix="local")
+            watch_terceiros_transferencias_file(transferencias_local, key_prefix="local")
             if st.session_state.pop("local_parametros_external_update_toast", False):
                 st.toast("parametros_gerenciais.csv atualizado fora do app. Tela recarregada.", icon="🔄")
+            if st.session_state.pop("local_transferencias_external_update_toast", False):
+                st.toast("terceiros_e_transferencias.csv atualizado fora do app. Tela recarregada.", icon="🔄")
             management_state = render_validated_management_inputs(
                 data_relatorio,
                 parametros_local.read_bytes(),
+                transferencias_local.read_bytes(),
+                (input_dir / REQUIRED_FILES["plantel"]).read_bytes() if (input_dir / REQUIRED_FILES["plantel"]).exists() else None,
                 key_prefix="local",
                 save_path=parametros_local,
+                transferencias_save_path=transferencias_local,
+                peso_medio_df=st.session_state.get("peso_medio_overrides"),
+                biomassa_alvo_df=st.session_state.get("biomassa_alvo"),
             )
         else:
-            st.error(f"Arquivo obrigatorio nao encontrado: {PARAMETROS_FILE}")
+            arquivos_ausentes = [
+                file_name
+                for file_name in [PARAMETROS_FILE, TERCEIROS_TRANSFERENCIAS_FILE]
+                if not (input_dir / file_name).exists()
+            ]
+            st.error("Arquivo obrigatorio nao encontrado: " + ", ".join(arquivos_ausentes))
         curvas_local = input_dir / REQUIRED_FILES["curvas"]
         if curvas_local.exists():
             try:
@@ -1573,31 +2567,64 @@ def main() -> None:
             except Exception as exc:
                 st.info(f"Não foi possível montar o comparativo de curvas local: {exc}")
         
-        if missing_local or management_state is None:
+        if missing_local or management_state is None or st.session_state.get("bloquear_simulacao", False):
             if missing_local:
                 st.warning("Arquivos locais obrigatorios ausentes: " + ", ".join(missing_local))
+            else:
+                st.warning("Preencha as metas de peso médio para todos os produtores.")
             st.button("🚀 Executar Simulação Local", disabled=True, key="btn_local_disabled")
         elif st.button("🚀 Executar Simulação Local", type="primary", key="btn_local_run"):
-            df_metas, df_terceiros, meses_visiveis = management_state
-            config = SimulationConfig(
-                input_dir=input_dir, plantel=REQUIRED_FILES["plantel"],
-                tanques=REQUIRED_FILES["tanques"], curvas=REQUIRED_FILES["curvas"],
-                racao=REQUIRED_FILES["racao"],
-                parametros_gerenciais=REQUIRED_FILES["parametros_gerenciais"],
-                output=output_name,
-                data_relatorio=data_relatorio, mostrar_erros=mostrar_erros,
-            )
+            df_metas, df_terceiros, df_peso_medio, df_biomassa_alvo, meses_visiveis = management_state
             try:
-                input_dir.mkdir(parents=True, exist_ok=True)
-                (input_dir / PARAMETROS_FILE).write_bytes(
-                    parametros_gerenciais_to_csv(df_metas, df_terceiros)
-                )
-                with st.spinner("Motor de Cálculo em Execução..."):
-                    out_path, stdout = run_simulation(config)
+                import tempfile
+                import shutil
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    work_dir = Path(tmp_dir)
+                    # Copia todos os arquivos do diretório local para o diretório temporário
+                    for f in input_dir.glob("*.csv"):
+                        shutil.copy(f, work_dir)
+                        
+                    # Sobrescreve com o estado atual da interface
+                    (work_dir / PARAMETROS_FILE).write_bytes(
+                        parametros_gerenciais_to_csv(df_metas, pd.DataFrame(columns=TERCEIROS_COLUMNS))
+                    )
+                    (work_dir / TERCEIROS_TRANSFERENCIAS_FILE).write_bytes(
+                        terceiros_e_transferencias_to_csv(df_terceiros)
+                    )
+                    if df_peso_medio is not None:
+                        (work_dir / "peso_medio_produtor.csv").write_bytes(
+                            peso_medio_overrides_to_csv(df_peso_medio, meses_visiveis or df_metas["Mês"].tolist())
+                        )
+                    if df_biomassa_alvo is not None:
+                        (work_dir / "biomassa_alvo.csv").write_bytes(
+                            biomassa_alvo_to_csv(df_biomassa_alvo, meses_visiveis or df_metas["Mês"].tolist())
+                        )
+                        
+                    # Atualiza o config para apontar para o diretório temporário
+                    config = SimulationConfig(
+                        input_dir=work_dir, plantel=REQUIRED_FILES["plantel"],
+                        tanques=REQUIRED_FILES["tanques"], curvas=REQUIRED_FILES["curvas"],
+                        racao=REQUIRED_FILES["racao"],
+                        parametros_gerenciais=REQUIRED_FILES["parametros_gerenciais"],
+                        terceiros_e_transferencias=REQUIRED_FILES["terceiros_e_transferencias"],
+                        output=output_name,
+                        data_relatorio=data_relatorio, mostrar_erros=mostrar_erros,
+                        peso_minimo_biomassa=st.session_state.get("peso_minimo_biomassa", 750),
+                        peso_maximo_biomassa=0.0,
+                        semanas_no_mes=st.session_state.get("semanas_no_mes", 4),
+                        capacidade_carga_a_ton=st.session_state.get("capacidade_carga_a_ton", 7.0),
+                        capacidade_carga_b_ton=st.session_state.get("capacidade_carga_b_ton", 10.0),
+                        margem_tolerancia_carga=st.session_state.get("margem_tolerancia_carga", 5.0),
+                    )
+
+                    with st.spinner("Motor de Cálculo em Execução..."):
+                        out_path, stdout = run_simulation(config)
+                        out_bytes = out_path.read_bytes()
+                        
                 st.session_state["df_metas"] = df_metas
                 st.session_state["df_terceiros"] = df_terceiros
                 st.session_state["meses_visiveis"] = meses_visiveis
-                st.session_state["last_artifact"] = ReportArtifact(out_path.name, out_path.read_bytes(), stdout, str(out_path))
+                st.session_state["last_artifact"] = ReportArtifact(out_path.name, out_bytes, stdout, str(out_path))
             except Exception as e:
                 st.error(f"Falha Crítica na Execução: {e}")
 

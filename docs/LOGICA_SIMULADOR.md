@@ -1,6 +1,6 @@
-# Lógica do Simulador Aquícola
+﻿# Lógica do Simulador Aquícola
 
-Este documento descreve a lógica atual do `simulador_aquicola.py`: como os dados são lidos, como a estação é definida, como a curva é aplicada, quais cálculos são usados e como os marcadores de status aparecem no relatório.
+Este documento descreve a lógica atual do motor `simulador_aquicola.py`, da interface `app/app.py` e dos módulos de cálculo em `math/`: como os dados são lidos, como a estação é definida, como a curva é aplicada, quais cálculos são usados e como os marcadores de status aparecem no relatório.
 
 ## 1. Entradas do Sistema
 
@@ -132,7 +132,7 @@ Os marcadores atuais são:
 | Dia `30` de cultivo | `Class 1` |
 | Primeiro dia em que o peso médio cruza `120g` | `Class 2` |
 | Peso médio maior ou igual a `900g` ou marcador de curva equivalente | `Peixe Pronto` |
-| Dias `20`, `41`, `94` e `300` sem marcador mais prioritário | `Realizar Biometria` |
+| Exatamente o mesmo dia informado na coluna `Dt.últ Biometria` da planilha | `Biometria` |
 
 As colunas usadas são:
 
@@ -141,7 +141,7 @@ As colunas usadas são:
 | Verão | `Marco de Gestao Verão` |
 | Inverno | `Marco de Gestao Inverno` |
 
-O status `Realizar Biometria` tem prioridade menor que `Class 1`, `Class 2` e `Peixe Pronto`.
+O status `Biometria` será cravado no primeiro dia da projeção de cada tanque e não se repete depois.
 
 O status `Tanque Disponivel` aparece no quinto dia após a liberação do tanque, representando o fim do vazio sanitário configurado em `5` dias.
 
@@ -161,7 +161,7 @@ O status `Tanque Disponivel` aparece no quinto dia após a liberação do tanque
 | `mort_acumulada_abs` | Soma de peixes mortos desde o início da simulação. |
 | `dc` | Dia equivalente da curva zootécnica. |
 | `fator_regional` | Fator aplicado ao GDP e ao consumo para determinadas regiões. |
-| `cluster` | Perfil tecnológico do produtor, usado para selecionar curvas específicas quando existirem. |
+| Perfil de desempenho | Perfil produtivo usado para selecionar curvas específicas e aplicar fator de desempenho quando existirem. O nome técnico `cluster` ainda é aceito pelo código por compatibilidade. |
 | `data_liberacao` | Data em que o tanque foi liberado por despesca total projetada. |
 
 ## 9. Fórmulas
@@ -243,10 +243,10 @@ Preço/kg = preço da faixa em que Peso Medio (g) se encaixa
 Custo de Ração Diário = Consumo Diário (kg) * Preço/kg
 ```
 
-As faixas usam limite inferior inclusivo e limite superior exclusivo. Exemplo:
+As faixas usam limite inferior estritamente maior e limite superior menor ou igual. Exemplo:
 
 ```text
-30 <= Peso Medio (g) < 100
+30 < Peso Medio (g) <= 100
 ```
 
 Na última faixa, o limite superior também é aceito.
@@ -340,6 +340,8 @@ O cálculo usa obrigatoriamente os valores preenchidos na tabela `Parâmetros Ge
 
 ### Saldo Acumulado Atualizado / Mês
 
+Nas abas regionais `APT` e `ITA`, o saldo acumulado mensal é calculado por região:
+
 ```text
 Saldo Acm Atualizado / mês =
     Saldo Acm Atualizado / mês do mês anterior
@@ -347,6 +349,130 @@ Saldo Acm Atualizado / mês =
 ```
 
 No primeiro mês, o saldo acumulado anterior é `0`.
+
+### Regras das Abas Regionais APT e ITA
+
+As abas `APT` e `ITA` usam a mesma função de montagem. A diferença é apenas o filtro de região e as colunas de parâmetros gerenciais usadas (`Dias Abate APT`/`PO Diário APT (kg)` ou `Dias Abate ITA`/`PO Diário ITA (kg)`).
+
+Nos quadros `QUADRO DE PEIXE GORDO - PRÓPRIO`, `QUADRO DE PEIXE GORDO - INTEGRAÇÃO` e `QUADRO DE PEIXE GORDO - PARCERIA`, as linhas de total somam os produtores/fazendas da respectiva classe, mês a mês:
+
+```text
+Total Próprio = soma dos produtores/fazendas do bloco Próprio
+Total Integração = soma dos produtores/fazendas do bloco Integração
+Total Parceria = soma dos produtores/fazendas do bloco Parceria
+```
+
+No quadro `QUADRO DE PEIXE GORDO TOTAL`, as previsões usam esses mesmos totais:
+
+```text
+Previsão de Abate Próprio = Total Próprio
+Previsão de Abate Integração = Total Integração
+Previsão de Abate Parceria = Total Parceria
+Previsão Disponibilidade Total =
+    Previsão de Abate Próprio
+    + Previsão de Abate Integração
+    + Previsão de Abate Parceria
+```
+
+No quadro regional `QUADRO DE DISPONIBILIDADE PARA O ABATE POR DIA`, as linhas diárias são calculadas por mês:
+
+```text
+Kg/Dia Próprio = Previsão de Abate Próprio / Dias de Abate
+Kg/Dia Integração = Previsão de Abate Integração / Dias de Abate
+Kg/Dia Parceria = Previsão de Abate Parceria / Dias de Abate
+
+Total Kg/Dia Disponível Abate =
+    Previsão Disponibilidade Total / Dias de Abate
+```
+
+No quadro regional `QUADRO DO SALDO DA DISPONIBILIDADE PARA O ABATE POR DIA e POR MÊS`:
+
+```text
+PO Atualizado = PO preenchido manualmente na tabela da interface
+PO = PO preenchido manualmente na tabela da interface
+
+Saldo Atualizado / dia =
+    Total Kg/Dia Disponível Abate - PO Atualizado
+```
+
+### Regras do Consolidado APT + ITA
+
+Na aba `Consolidado APT + ITA`, os blocos regionais `APT` e `ITA` copiam ou recalculam os valores das abas regionais correspondentes, sempre mês a mês.
+
+Nos blocos regionais do Consolidado:
+
+```text
+Dias de Abate = Dias de Abate da aba regional
+Kg/Dia Próprio = Kg/Dia Próprio da aba regional
+Kg/Dia Integração = Kg/Dia Integração da aba regional
+Kg/Dia Parceria = Kg/Dia Parceria da aba regional
+
+Total Kg/Dia Dispon Abate =
+    Kg/Dia Próprio
+    + Kg/Dia Integração
+    + Kg/Dia Parceria
+
+PO Atualizado = PO Atualizado da aba regional
+PO = PO da aba regional
+
+Saldo PO Atual. x Disponível =
+    Total Kg/Dia Dispon Abate - PO Atualizado
+```
+
+No bloco `QUADRO DE DISPONIBILIDADE PARA O ABATE / DIA - GERAL`:
+
+```text
+Total Kg/Dia Disponível Abate =
+    Total Kg/Dia Dispon Abate APT
+    + Total Kg/Dia Dispon Abate ITA
+
+PO Atualizado = PO Atualizado APT + PO Atualizado ITA
+PO = PO APT + PO ITA
+
+Saldo PO Atualizado =
+    Total Kg/Dia Disponível Abate - PO Atualizado
+
+Saldo PO =
+    Total Kg/Dia Disponível Abate - PO
+
+Saldo Acm Atualizado / Dia =
+    Saldo PO Atualizado do mês atual
+    + Saldo Acm Atualizado / Dia do mês anterior
+
+Saldo Acm / Dia =
+    Saldo PO do mês atual
+    + Saldo Acm / Dia do mês anterior
+```
+
+No bloco `QUADRO DE DISPONIBILIDADE PARA O ABATE / MÊS - GERAL`:
+
+```text
+Total Kg/Mês Disponível Abate =
+    (Total Kg/Dia Dispon Abate APT * Dias de Abate APT)
+    + (Total Kg/Dia Dispon Abate ITA * Dias de Abate ITA)
+
+PO Atualizado (No mês) Saldo =
+    (PO Atualizado APT * Dias de Abate APT)
+    + (PO Atualizado ITA * Dias de Abate ITA)
+
+PO (No Mês) =
+    (PO APT * Dias de Abate APT)
+    + (PO ITA * Dias de Abate ITA)
+
+Saldo PO Atualizado =
+    Total Kg/Mês Disponível Abate - PO Atualizado (No mês) Saldo
+
+Saldo PO =
+    Total Kg/Mês Disponível Abate - PO (No Mês)
+
+Saldo Acum Atualizado / Mês =
+    Saldo PO Atualizado do mês atual
+    + Saldo Acum Atualizado / Mês do mês anterior
+
+Saldo Acum / Mês =
+    Saldo PO do mês atual
+    + Saldo Acum / Mês do mês anterior
+```
 
 ### Visualização
 
@@ -374,29 +500,103 @@ A aba consolidada segue a estrutura operacional da planilha gerencial:
 - bloco `QUADRO DE DISPONIBILIDADE PARA O ABATE / DIA - GERAL`;
 - bloco `QUADRO DE DISPONIBILIDADE PARA O ABATE / MÊS - GERAL`.
 
-Os blocos regionais reutilizam os cálculos já gerados nas abas APT e ITA. O bloco geral soma as duas regiões.
+Os blocos regionais reutilizam os cálculos já gerados nas abas APT e ITA. O bloco geral soma as duas regiões e aplica as regras diárias e mensais descritas acima.
 
-## 12. Clusterização de Produtores
+### Organização das Fórmulas em `math/`
 
-O `plantel.csv` pode conter uma coluna opcional de cluster/perfil tecnológico, como:
+A refatoração está seguindo o padrão de mudança paralela. Por isso, as regras matemáticas estão sendo copiadas para funções puras em `math/`, enquanto `app/app.py` e o motor de simulação ainda fazem a orquestração, montagem das tabelas e chamadas dessas funções durante a validação das fórmulas.
 
-- `Alta Tecnologia`;
-- `Media Tecnologia`;
-- `Baixa Tecnologia`.
+Os módulos de cálculo não dependem de Streamlit nem de estado global da interface. A regra esperada é receber `DataFrame`, séries, dicionários ou nomes de colunas como parâmetros e devolver uma nova `Series`, `dict` ou uma cópia atualizada do `DataFrame`.
 
-Se a coluna não existir, o simulador usa `Media Tecnologia` como padrão, sem alterar a curva atual.
+#### `math/calculos_zootecnicos.py`
 
-O `curvas.csv` também pode conter uma coluna opcional de cluster. Quando existirem curvas específicas para o cluster do lote, o simulador usa essas curvas. Se não existirem, usa a curva padrão da estação.
+Centraliza cálculos biológicos e produtivos do lote:
 
-Quando o arquivo contém mais de um cluster, a interface apresenta uma visualização opcional de programas/curvas empilhadas para comparação. Essa visualização é apenas analítica e não substitui automaticamente os dados da simulação.
+- `calcular_biomassa`: calcula `Biomassa (kg)` como `Quantidade de Peixes * Peso Medio (g) / 1000`.
+- `calcular_ganho_biomassa_acumulado`: calcula o ganho acumulado como `Biomassa atual - Biomassa inicial do lote`. Quando não há coluna de biomassa inicial, usa a primeira biomassa do grupo ordenado por data.
+- `calcular_decaimento_populacional`: reproduz a mortalidade diária por decaimento populacional. Para cada linha, calcula `mortos_dia = quantidade_ativa * mortalidade_pct / 100`, reduz a quantidade ativa e acumula a mortalidade.
+- `calcular_mortalidade_acumulada`: devolve apenas a série de mortalidade acumulada produzida pelo decaimento populacional.
+- `calcular_po_atualizado`: mantém `PO Atualizado` como o PO preenchido manualmente na tabela.
+- `aplicar_calculos_zootecnicos`: devolve uma cópia do `DataFrame` com biomassa, ganho acumulado, mortalidade e PO atualizado quando as colunas correspondentes forem informadas.
 
-Além da seleção de curva específica, o código aplica um fator de desempenho somente quando o lote possui cluster informado:
+#### `math/calculos_alimentacao.py`
 
-| Cluster | Fator |
+Centraliza cálculos de consumo de ração e conversão alimentar:
+
+- `calcular_consumo_racao_acumulado`: calcula o consumo acumulado por lote com `cumsum`, respeitando a ordenação por grupo e data. Quando `data_base` é informada, linhas anteriores à data base entram no acumulado como `0`.
+- `calcular_consumo_racao_acumulado_por_fase`: calcula o consumo acumulado dentro da fase nutricional ativa, agrupando por lote e fase.
+- `calcular_tca_diario`: calcula `TCA Diario = Consumo Diario / Ganho de Biomassa do Dia`, retornando `0` quando o ganho é menor ou igual a zero.
+- `calcular_tca_acumulado`: calcula `TCA Acumulado = Consumo Acumulado / Ganho de Biomassa Acumulado`, com divisão segura e zerando linhas anteriores à `data_base` quando ela for usada.
+- `aplicar_calculos_alimentacao`: devolve uma cópia do `DataFrame` com consumo acumulado, consumo por fase e TCA quando as colunas necessárias forem informadas.
+
+#### `math/calculos_saldo.py`
+
+Mantém a regra isolada de saldo acumulado mensal:
+
+```text
+Saldo Acumulado Atualizado do Mês =
+    (Saldo Acumulado do Dia * Dias de Abate)
+    + Saldo Acumulado do Mês Anterior
+```
+
+A função `calcular_saldo_acumulado_mes` calcula esse saldo por grupo usando `groupby().cumsum()` e `groupby().shift(1)`. O `DataFrame` deve chegar ordenado na sequência temporal desejada dentro de cada agrupamento.
+
+#### `math/calculos_movimentacao.py`
+
+Centraliza cálculos de movimentação, disponibilidade de tanque e tabelas gerenciais:
+
+- `calcular_data_tanque_disponivel`: calcula `Data Tanque Disponivel = Data do Tanque Liberado + 5 dias`.
+- `calcular_flag_tanque_disponivel_por_vazio`: marca `Tanques Disponivel = 1` na linha cuja data coincide com a liberação do tanque mais o vazio sanitário.
+- `calcular_gatilho_biometria` e `calcular_status_com_biometria`: identificam a data da última biometria e aplicam o status de biometria quando a linha cruza essa data.
+- `calcular_saldo_acumulado_mes`: replica a regra de saldo acumulado mensal também neste módulo para uso gerencial durante a mudança paralela.
+- `calcular_saldo_acumulado_consolidado`: soma `Saldo Acm Atualizado / Mês` da aba APT com `Saldo Acm Atualizado / Mês` da aba ITA.
+- `calcular_total_kg_dia_disponivel_abate`: soma `Kg/Dia Próprio + Kg/Dia Integração + Kg/Dia Parceria`.
+- `calcular_total_kg_mes_disponivel_abate_consolidado`: calcula o total mensal geral como `(Total Kg/Dia APT * Dias APT) + (Total Kg/Dia ITA * Dias ITA)`.
+- `calcular_po_atualizado_no_mes_saldo_consolidado`: calcula `PO Atualizado (No mês) Saldo` como `(PO Atualizado APT * Dias APT) + (PO Atualizado ITA * Dias ITA)`.
+- `calcular_po_no_mes_saldo_consolidado`: calcula `PO (No Mês)` como `(PO APT * Dias APT) + (PO ITA * Dias ITA)`.
+- `calcular_saldo_po_mes_geral`: calcula saldos mensais como `Total Kg/Mês Disponível Abate - PO mensal`.
+- `calcular_saldo_acum_mes_geral`: calcula saldo acumulado mês a mês somando o saldo do mês atual ao acumulado do mês anterior.
+- `calcular_saldo_po_atual_disponivel_dia`: calcula `Saldo PO Atual. x Disponível = Total Kg/Dia Dispon Abate - PO Atualizado`.
+- `calcular_saldo_acumulado_dia`: calcula saldo acumulado diário mês a mês somando o saldo do mês atual ao acumulado do mês anterior.
+- `referenciar_saldo_atualizado_dia`, `referenciar_po_regional` e `referenciar_saldo_acumulado_regional`: copiam mês a mês valores já calculados nas abas regionais para os blocos consolidados, simulando referências de célula da planilha.
+
+## 12. Perfil de Desempenho
+
+O `plantel.csv` pode conter uma coluna opcional de perfil de desempenho, como:
+
+- `Alto Desempenho`;
+- `Desempenho Padrão`;
+- `Baixo Desempenho`.
+
+Se a coluna não existir, o simulador usa o perfil padrão, equivalente ao fator `1,00`, sem alterar a curva atual.
+
+O código também aceita nomes técnicos ou antigos como `cluster`, `perfil`, `perfil produtor`, `perfil de produtor`, `perfil tecnologico`, `tecnologia`, `Alta Tecnologia`, `Media Tecnologia` e `Baixa Tecnologia` por compatibilidade com arquivos já existentes.
+
+O `curvas.csv` também pode conter uma coluna opcional de perfil de desempenho. Quando existirem curvas específicas para o perfil do lote, o simulador usa essas curvas. Se não existirem, usa a curva padrão da estação.
+
+Quando o arquivo contém mais de um perfil, a interface apresenta uma visualização opcional de programas/curvas empilhadas para comparação. Essa visualização é apenas analítica e não substitui automaticamente os dados da simulação.
+
+Além da seleção de curva específica, o código aplica um fator de desempenho:
+
+| Perfil de Desempenho | Fator |
 | --- | --- |
-| Alta Tecnologia | `1,05` |
-| Media Tecnologia | `1,00` |
-| Baixa Tecnologia | `0,92` |
+| Alto Desempenho | `1,05` |
+| Desempenho Padrão | `1,00` |
+| Baixo Desempenho | `0,92` |
+
+O motor é flexível e busca automaticamente variações e sinônimos (ex: `Alta Tecnologia`, `Tech-A`, `A` para Alto Desempenho) para evitar que erros de digitação na planilha anulem o bônus/punição.
+
+### Fator de Região
+
+Independente da curva ou cluster do produtor, regiões de clima reconhecidamente mais adverso possuem punições diretas de desempenho (que freiam o crescimento diário):
+
+| Região | Fator |
+| --- | --- |
+| Itaporã (`ITA`) | `0,85` |
+| Paraná (`PRN` ou `PR`) | `0,85` |
+| Demais (ex: Aparecida do Taboado - `APT`) | `1,00` |
+
+Siglas e nomes completos são validados automaticamente via código de correspondência flexível.
 
 ## 13. Transição de Plantel
 

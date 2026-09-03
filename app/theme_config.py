@@ -167,6 +167,18 @@ def format_negative_value(value: Any) -> Any:
         return f"{NEGATIVE_PREFIX}{_display_number_preserving_sign(value)}"
     return value
 
+def format_transfer_value(value: Any) -> Any:
+    numeric_value = _coerce_display_number(value)
+    if numeric_value is None:
+        return value
+        
+    if numeric_value < 0:
+        return f"📉 {_display_number_preserving_sign(value)}"
+    elif numeric_value > 0:
+        return f"📈 {_display_number_preserving_sign(value)}"
+    else:
+        return f"{_display_number_preserving_sign(value)}"
+
 
 def style_numeric_value(value: Any) -> str:
     numeric_value = _coerce_display_number(value)
@@ -189,23 +201,23 @@ def _apply_numeric_value_styles(
 
 
 def _section_pattern(label: str) -> PatternName | None:
-    if label.startswith("quadro de peixe gordo - proprio"):
+    if label.startswith("qd peixe gordo - proprio"):
         return "A"
-    if label.startswith("quadro de peixe gordo - integracao"):
+    if label.startswith("qd peixe gordo - integracao"):
         return "B"
-    if label.startswith("quadro de peixe gordo - parceria"):
+    if label.startswith("qd peixe gordo - parceria"):
         return "C"
-    if label.startswith("quadro de peixe gordo total"):
+    if label.startswith("qd peixe gordo total"):
         return "A"
-    if label.startswith("quadro de disponibilidade"):
+    if label.startswith("qd disp"):
         return "B"
-    if label.startswith("quadro do saldo"):
+    if label.startswith("qd saldo"):
         return "C"
     return None
 
 
 def _is_section_header(label: str) -> bool:
-    return label.startswith("quadro")
+    return label.startswith("qd")
 
 
 def _is_section_footer(label: str) -> bool:
@@ -215,6 +227,13 @@ def _is_section_footer(label: str) -> bool:
         or label.startswith("total kg/dia")
         or label.startswith("saldo acm atualizado")
     )
+
+
+def _is_dark_gray_row(label: str) -> bool:
+    return label in {
+        "previsao disponibilidade total",
+        "previsao de disponibilidade total",
+    }
 
 
 def _resolve_label_column(df: pd.DataFrame, label_column: str) -> str:
@@ -276,6 +295,16 @@ def _row_styles(
             )
             continue
 
+        if _is_dark_gray_row(label):
+            styles[index] = _css(
+                COLORS["dark_gray"],
+                COLORS["white"],
+                font_weight="900",
+                border_top=f"1px solid {COLORS['dark_gray']}",
+                border_bottom=f"1px solid {COLORS['dark_gray']}",
+            )
+            continue
+
         body_row_count += 1
         if body_row_count % 2 == 1:
             styles[index] = _css(current_pattern.odd_background, current_pattern.odd_text)
@@ -285,11 +314,119 @@ def _row_styles(
     return styles
 
 
+def style_sobras_faltas_dataframe(
+    df: pd.DataFrame,
+    pattern_name: PatternName = "A",
+) -> pd.io.formats.style.Styler:
+    """Aplica o tema padrão Mar & Terra na tabela de Sobras x Faltas."""
+    pattern = TABLE_PATTERNS[pattern_name]
+    
+    def _row_styles(row):
+        row_idx = df.index.get_loc(row.name)
+        if row_idx % 2 == 0:
+            bg = pattern.even_background
+            text = pattern.even_text
+        else:
+            bg = pattern.odd_background
+            text = pattern.odd_text
+        return [_css(bg, text) for _ in row]
+
+    styler = df.style.apply(_row_styles, axis=1)
+
+    def color_falta(val, row_idx):
+        numeric_val = _coerce_display_number(val)
+        bg = pattern.even_background if row_idx % 2 == 0 else pattern.odd_background
+        if numeric_val and numeric_val > 0:
+            return f"color: #EF4444; font-weight: bold; background-color: {bg}"
+        text = pattern.even_text if row_idx % 2 == 0 else pattern.odd_text
+        return f"color: {text}; background-color: {bg}"
+
+    def color_sobra(val, row_idx):
+        numeric_val = _coerce_display_number(val)
+        bg = pattern.even_background if row_idx % 2 == 0 else pattern.odd_background
+        if numeric_val and numeric_val > 0:
+            return f"color: #0077B6; font-weight: bold; background-color: {bg}"
+        text = pattern.even_text if row_idx % 2 == 0 else pattern.odd_text
+        return f"color: {text}; background-color: {bg}"
+
+    # Apply conditional colors using row index
+    for row_idx in range(len(df)):
+        if "Biomassa que faltou para a Meta" in df.columns:
+            styler = styler.map(lambda val, idx=row_idx: color_falta(val, idx), subset=pd.IndexSlice[df.index[row_idx], ["Biomassa que faltou para a Meta"]])
+        if "Sobra de Biomassa Pronta" in df.columns:
+            styler = styler.map(lambda val, idx=row_idx: color_sobra(val, idx), subset=pd.IndexSlice[df.index[row_idx], ["Sobra de Biomassa Pronta"]])
+
+    def format_to_tonnes(value: Any) -> str:
+        if isinstance(value, str):
+            try:
+                numeric_val = float(value.replace(",", "."))
+            except ValueError:
+                return value
+        else:
+            try:
+                numeric_val = float(value)
+            except (TypeError, ValueError):
+                return str(value)
+        
+        tonnes = numeric_val / 1000.0
+        return f"{tonnes:,.1f} t".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    styler = _apply_numeric_value_styles(styler)
+    
+    # Identify which columns to convert to tonnes (all numeric ones except Mês, Produtor, Tanque, etc)
+    non_metric_cols = {"Mês", "Produtor", "Produtor de Origem", "Tanque", "Produtor de Destino"}
+    metric_cols = [c for c in df.columns if c not in non_metric_cols]
+    
+    if metric_cols:
+        styler = styler.format(format_to_tonnes, subset=metric_cols)
+    else:
+        styler = styler.format(_display_number_preserving_sign)
+
+    # Highlight interactive columns headers
+    interactive_cols = [
+        "Disponível", 
+        "Alocação Própria", 
+        "Alocação p/ Terceiros", 
+        "Alocação Total", 
+        "Sobra de Biomassa Pronta"
+    ]
+    interactive_styles = {
+        col: [{'selector': 'th', 'props': [('background-color', '#FEF08A'), ('color', '#000000')]}]
+        for col in interactive_cols if col in df.columns
+    }
+    if interactive_styles:
+        styler.set_table_styles(interactive_styles, overwrite=False)
+
+    styler = styler.set_table_styles(
+        [
+            {
+                "selector": "thead th",
+                "props": [
+                    ("background-color", pattern.header_footer_background),
+                    ("color", pattern.header_footer_text),
+                    ("font-weight", "800"),
+                    ("text-align", "center"),
+                    ("border-bottom", f"1px solid {COLORS['medium_gray']}"),
+                ],
+            },
+            {
+                "selector": "td",
+                "props": [
+                    ("border-color", COLORS["medium_gray"]),
+                ],
+            },
+        ]
+    ).hide(axis="index")
+    
+    return styler
+
+
 def style_dark_regional_report(
     df: pd.DataFrame,
     *,
     label_column: str = "Conteúdo / Bloco",
     default_pattern: PatternName | None = None,
+    df_tooltips: pd.DataFrame | None = None,
 ) -> pd.io.formats.style.Styler:
     label_column = _resolve_label_column(df, label_column)
     row_styles = _row_styles(df, label_column, default_pattern)
@@ -304,6 +441,24 @@ def style_dark_regional_report(
         df.style.apply(apply_row_style, axis=1).format(formatters),
         subset=value_columns,
     )
+
+    if df_tooltips is not None:
+        def apply_tooltip_color(val):
+            if pd.notna(val) and val is not None and str(val).strip() != "":
+                if "Entrada" in str(val): return "color: #4CAF50; font-weight: 800;"
+                if "Saída" in str(val): return "color: #F44336; font-weight: 800;"
+            return ""
+            
+        if hasattr(df_tooltips, "map"):
+            styler = styler.apply(
+                lambda df_vals: df_tooltips.map(apply_tooltip_color),
+                axis=None
+            )
+        else:
+            styler = styler.apply(
+                lambda df_vals: df_tooltips.applymap(apply_tooltip_color),
+                axis=None
+            )
 
     styler = (
         styler

@@ -41,6 +41,11 @@ FINAL_TOTAL_ROW_LABELS = {
     "peso medio",
 }
 
+ZEBRA_ROW_LABELS = {
+    "saldo po atualizado",
+    "saldo po",
+}
+
 HIGHLIGHT_ROW_MARKERS = (
     "saldo po",
     "total",
@@ -121,7 +126,7 @@ def _is_gray_highlight_row(row: pd.Series) -> bool:
 
 
 def _is_section_header(label: str) -> bool:
-    return label in SECTION_HEADER_LABELS or label.startswith("quadro")
+    return label in SECTION_HEADER_LABELS or label.startswith("qd")
 
 
 def _is_subtotal(label: str) -> bool:
@@ -130,6 +135,8 @@ def _is_subtotal(label: str) -> bool:
 
 
 def _is_final_total(label: str) -> bool:
+    if label in ZEBRA_ROW_LABELS:
+        return False
     return label in FINAL_TOTAL_ROW_LABELS
 
 
@@ -178,7 +185,11 @@ def _row_styles(df: pd.DataFrame, label_column: str | None) -> dict[Any, str]:
 
     for index, row in df.iterrows():
         label = _row_label(row, label_column)
-        is_gray_highlight = _is_gray_highlight_row(row) and index not in last_table_rows
+        is_gray_highlight = (
+            _is_gray_highlight_row(row)
+            and label not in ZEBRA_ROW_LABELS
+            and index not in last_table_rows
+        )
 
         if not label:
             if is_gray_highlight:
@@ -248,6 +259,7 @@ def style_consolidado_dataframe(
     *,
     label_column: str | None = None,
     hide_index: bool = True,
+    df_tooltips: pd.DataFrame | None = None,
 ) -> pd.io.formats.style.Styler:
     """Aplica o tema da tela Consolidado (APT + ITA) em um DataFrame.
 
@@ -271,11 +283,29 @@ def style_consolidado_dataframe(
     if resolved_label_column:
         formatters[resolved_label_column] = (
             lambda value: ""
-            if normalize_label(value) in {"quadro de", "apt", "ita", "itapora"}
+            if normalize_label(value) in {"qd", "apt", "ita", "itapora"}
             else value
         )
 
     styler = styler.format(formatters)
+    
+    if df_tooltips is not None:
+        def apply_tooltip_color(val):
+            if pd.notna(val) and val is not None and str(val).strip() != "":
+                if "Entrada" in str(val): return "color: #4CAF50; font-weight: 800;"
+                if "Saída" in str(val): return "color: #F44336; font-weight: 800;"
+            return ""
+            
+        if hasattr(df_tooltips, "applymap"):
+            styler = styler.apply(
+                lambda df_vals: df_tooltips.applymap(apply_tooltip_color),
+                axis=None
+            )
+        else:
+            styler = styler.apply(
+                lambda df_vals: df_tooltips.map(apply_tooltip_color),
+                axis=None
+            )
 
     styler = (
         styler.set_table_styles(
