@@ -1460,15 +1460,21 @@ def executar(args: argparse.Namespace) -> Path:
             log_dir = output_path_obj.parent / "log_auditoria"
             log_dir.mkdir(parents=True, exist_ok=True)
             
+            prefixo_id = datetime.now().strftime("%y%m%d")
+            seq = 1
+            
             df_cargas = []
             for c in plano["cargas"]:
+                id_carga = f"{prefixo_id}-{seq}"
+                seq += 1
                 for f in c.fracoes:
                     df_cargas.append({
+                        'ID_Carga': id_carga,
                         'Mes': c.mes,
                         'Semana': c.semana,
+                        'Produtor_Origem': f.produtor_origem,
                         'Produtor_Destino': c.produtor_destino,
                         'Tamanho_Carga_kg': c.volume_kg,
-                        'Produtor_Origem': f.produtor_origem,
                         'Tanque': f.tanque,
                         'Volume_kg': f.volume_kg,
                         'Peso_Medio_g': f.peso_medio_g,
