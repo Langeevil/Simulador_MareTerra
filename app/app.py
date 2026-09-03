@@ -131,6 +131,8 @@ class SimulationConfig:
     output: str
     data_relatorio: date
     mostrar_erros: bool
+    peso_minimo_biomassa: float
+    peso_maximo_biomassa: float
 
 @dataclass(frozen=True)
 class ReportArtifact:
@@ -1987,8 +1989,8 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
         
     # (Painel unificado removido conforme solicitado na Etapa 1)
     
-    tab_apt, tab_ita, tab_consolidado, tab_esperado_realizado = st.tabs(
-        ["🏭 APT (Aparecida do Taboado)", "🏭 ITA (Itaporã)", "📊 Consolidado APT + ITA", "🎯 Esperado x Realizado"]
+    tab_apt, tab_ita, tab_consolidado, tab_esperado_realizado, tab_sobras = st.tabs(
+        ["🏭 APT", "🏭 ITA", "📊 Consolidado APT + ITA", "🎯 Esperado x Realizado", "📦 Sobras x Faltas"]
     )
     with tab_apt:
         chart_apt = dataframe_for_chart(
@@ -2117,6 +2119,23 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
         else:
             st.info("Nenhum dado diário disponível.")
 
+    with tab_sobras:
+        st.markdown("### 📦 Sobras x Faltas de Biomassa")
+        st.caption("Visão do que foi disponibilizado, recebido e as respectivas sobras no tanque ou faltas de cumprimento da meta (mês a mês).")
+        last_artifact = st.session_state.get("last_artifact")
+        if last_artifact and last_artifact.output_path:
+            sf_path = Path(last_artifact.output_path).parent / "log_auditoria" / "sobras_faltas.csv"
+            if sf_path.exists():
+                df_sf = pd.read_csv(sf_path, sep=';', encoding='utf-8-sig')
+                if not df_sf.empty:
+                    st.dataframe(df_sf, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Nenhum desvio ou interação registrado.")
+            else:
+                st.info("Log de sobras/faltas não encontrado. Pode ser que a simulação rodou sem metas.")
+        else:
+            st.info("Rode a simulação primeiro.")
+
 def render_common_settings() -> tuple[date, str, bool]:
     st.subheader("Configurações da simulação")
     col1, col2, col3 = st.columns([1, 1.3, 1])
@@ -2149,6 +2168,8 @@ def run_simulation(config: SimulationConfig) -> tuple[Path, str]:
         terceiros_e_transferencias=config.terceiros_e_transferencias,
         output=str(output_path), mostrar_erros=config.mostrar_erros,
         data_relatorio=config.data_relatorio.strftime("%d/%m/%Y"),
+        peso_minimo_biomassa=config.peso_minimo_biomassa,
+        peso_maximo_biomassa=config.peso_maximo_biomassa,
     )
     with redirect_stdout(stdout_buffer):
         output_path = executar(args)
@@ -2352,6 +2373,8 @@ def main() -> None:
                             terceiros_e_transferencias=REQUIRED_FILES["terceiros_e_transferencias"],
                             output=output_name,
                             data_relatorio=data_relatorio, mostrar_erros=mostrar_erros,
+                            peso_minimo_biomassa=st.session_state.get("peso_minimo_biomassa", 700),
+                            peso_maximo_biomassa=st.session_state.get("peso_maximo_biomassa", 0),
                         )
                         with st.spinner("Motor de Cálculo em Execução..."):
                             out_path, stdout = run_simulation(config)
@@ -2434,6 +2457,8 @@ def main() -> None:
                 terceiros_e_transferencias=REQUIRED_FILES["terceiros_e_transferencias"],
                 output=output_name,
                 data_relatorio=data_relatorio, mostrar_erros=mostrar_erros,
+                peso_minimo_biomassa=st.session_state.get("peso_minimo_biomassa", 700),
+                peso_maximo_biomassa=st.session_state.get("peso_maximo_biomassa", 0),
             )
             try:
                 input_dir.mkdir(parents=True, exist_ok=True)

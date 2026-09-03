@@ -1422,6 +1422,61 @@ def executar(args: argparse.Namespace) -> Path:
         data_relatorio=data_relatorio,
         overrides_peso=overrides_peso,
     )
+
+    # -------- INTEGRAÇÃO BIOMASSA ALVO (Tópico 4) --------
+    caminho_biomassa_alvo = resolve_input_file(input_dir, "biomassa_alvo.csv")
+    peso_min = getattr(args, "peso_minimo_biomassa", 700)
+    peso_max = getattr(args, "peso_maximo_biomassa", 0)
+
+    if caminho_biomassa_alvo.exists():
+        import biomassa_alvo_processor
+        import pandas as pd
+        biomassa_alvo_df = pd.read_csv(caminho_biomassa_alvo, sep=';', encoding='utf-8-sig', dtype=str)
+        
+        df_tanques_disponiveis = biomassa_alvo_processor.processar_biomassa_alvo(
+            resultado, biomassa_alvo_df, peso_min, peso_max
+        )
+        if not df_tanques_disponiveis.empty:
+            alocacoes, deficits = biomassa_alvo_processor.alocar_biomassa(
+                df_tanques_disponiveis, biomassa_alvo_df
+            )
+            cargas = biomassa_alvo_processor.empacotar_cargas(alocacoes, semanas=4)
+            resultado = biomassa_alvo_processor.aplicar_despesca_no_relatorio(resultado, cargas)
+            
+            # --- Relatórios de Auditoria e Sobras/Faltas ---
+            output_path_obj = Path(args.output)
+            if not output_path_obj.is_absolute():
+                output_path_obj = resolve_runtime_path(output_path_obj)
+            
+            auditoria_dir = output_path_obj.parent / "log_auditoria"
+            auditoria_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Auditoria Cargas
+            df_cargas = []
+            for c in cargas:
+                for comp in c['Composicao']:
+                    row = {
+                        'Mes': c['Mes'],
+                        'Semana': c['Semana'],
+                        'Produtor_Destino': c['Produtor_Destino'],
+                        'Tamanho_Carga_kg': c['Tamanho_Carga_kg'],
+                        'Produtor_Origem': comp['Produtor_Origem'],
+                        'Tanque': comp['Tanque'],
+                        'Volume_kg': comp['Volume_kg'],
+                        'Peso_Medio_g': comp['Peso_Medio_g'],
+                        'Data_Snapshot': comp['Data_Snapshot']
+                    }
+                    df_cargas.append(row)
+            pd.DataFrame(df_cargas).to_csv(auditoria_dir / "log_cargas_auditoria.csv", sep=';', index=False, encoding='utf-8-sig')
+            
+            # Auditoria Déficits
+            pd.DataFrame(deficits).to_csv(auditoria_dir / "log_deficits.csv", sep=';', index=False, encoding='utf-8-sig')
+            
+            # Sobras e Faltas
+            df_sobras = biomassa_alvo_processor.gerar_relatorio_sobras_faltas(df_tanques_disponiveis, biomassa_alvo_df, cargas)
+            df_sobras.to_csv(auditoria_dir / "sobras_faltas.csv", sep=';', index=False, encoding='utf-8-sig')
+    # -----------------------------------------------------
+
     resultado = adicionar_custos_racao(resultado, racao, data_relatorio)
     plantel_nova_geracao = getattr(args, "plantel_nova_geracao_output", "")
     if plantel_nova_geracao:
