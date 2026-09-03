@@ -314,6 +314,113 @@ def _row_styles(
     return styles
 
 
+def style_sobras_faltas_dataframe(
+    df: pd.DataFrame,
+    pattern_name: PatternName = "A",
+) -> pd.io.formats.style.Styler:
+    """Aplica o tema padrão Mar & Terra na tabela de Sobras x Faltas."""
+    pattern = TABLE_PATTERNS[pattern_name]
+    
+    def _row_styles(row):
+        row_idx = df.index.get_loc(row.name)
+        if row_idx % 2 == 0:
+            bg = pattern.even_background
+            text = pattern.even_text
+        else:
+            bg = pattern.odd_background
+            text = pattern.odd_text
+        return [_css(bg, text) for _ in row]
+
+    styler = df.style.apply(_row_styles, axis=1)
+
+    def color_falta(val, row_idx):
+        numeric_val = _coerce_display_number(val)
+        bg = pattern.even_background if row_idx % 2 == 0 else pattern.odd_background
+        if numeric_val and numeric_val > 0:
+            return f"color: #EF4444; font-weight: bold; background-color: {bg}"
+        text = pattern.even_text if row_idx % 2 == 0 else pattern.odd_text
+        return f"color: {text}; background-color: {bg}"
+
+    def color_sobra(val, row_idx):
+        numeric_val = _coerce_display_number(val)
+        bg = pattern.even_background if row_idx % 2 == 0 else pattern.odd_background
+        if numeric_val and numeric_val > 0:
+            return f"color: #0077B6; font-weight: bold; background-color: {bg}"
+        text = pattern.even_text if row_idx % 2 == 0 else pattern.odd_text
+        return f"color: {text}; background-color: {bg}"
+
+    # Apply conditional colors using row index
+    for row_idx in range(len(df)):
+        if "Biomassa que faltou para a Meta" in df.columns:
+            styler = styler.map(lambda val, idx=row_idx: color_falta(val, idx), subset=pd.IndexSlice[df.index[row_idx], ["Biomassa que faltou para a Meta"]])
+        if "Sobra de Biomassa Pronta" in df.columns:
+            styler = styler.map(lambda val, idx=row_idx: color_sobra(val, idx), subset=pd.IndexSlice[df.index[row_idx], ["Sobra de Biomassa Pronta"]])
+
+    def format_to_tonnes(value: Any) -> str:
+        if isinstance(value, str):
+            try:
+                numeric_val = float(value.replace(",", "."))
+            except ValueError:
+                return value
+        else:
+            try:
+                numeric_val = float(value)
+            except (TypeError, ValueError):
+                return str(value)
+        
+        tonnes = numeric_val / 1000.0
+        return f"{tonnes:,.1f} t".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    styler = _apply_numeric_value_styles(styler)
+    
+    # Identify which columns to convert to tonnes (all numeric ones except Mês, Produtor, Tanque, etc)
+    non_metric_cols = {"Mês", "Produtor", "Produtor de Origem", "Tanque", "Produtor de Destino"}
+    metric_cols = [c for c in df.columns if c not in non_metric_cols]
+    
+    if metric_cols:
+        styler = styler.format(format_to_tonnes, subset=metric_cols)
+    else:
+        styler = styler.format(_display_number_preserving_sign)
+
+    # Highlight interactive columns headers
+    interactive_cols = [
+        "Disponível", 
+        "Alocação Própria", 
+        "Alocação p/ Terceiros", 
+        "Alocação Total", 
+        "Sobra de Biomassa Pronta"
+    ]
+    interactive_styles = {
+        col: [{'selector': 'th', 'props': [('background-color', '#FEF08A'), ('color', '#000000')]}]
+        for col in interactive_cols if col in df.columns
+    }
+    if interactive_styles:
+        styler.set_table_styles(interactive_styles, overwrite=False)
+
+    styler = styler.set_table_styles(
+        [
+            {
+                "selector": "thead th",
+                "props": [
+                    ("background-color", pattern.header_footer_background),
+                    ("color", pattern.header_footer_text),
+                    ("font-weight", "800"),
+                    ("text-align", "center"),
+                    ("border-bottom", f"1px solid {COLORS['medium_gray']}"),
+                ],
+            },
+            {
+                "selector": "td",
+                "props": [
+                    ("border-color", COLORS["medium_gray"]),
+                ],
+            },
+        ]
+    ).hide(axis="index")
+    
+    return styler
+
+
 def style_dark_regional_report(
     df: pd.DataFrame,
     *,

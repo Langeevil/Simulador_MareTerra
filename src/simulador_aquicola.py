@@ -1425,56 +1425,70 @@ def executar(args: argparse.Namespace) -> Path:
 
     # -------- INTEGRAÇÃO BIOMASSA ALVO (Tópico 4) --------
     caminho_biomassa_alvo = resolve_input_file(input_dir, "biomassa_alvo.csv")
-    peso_min = getattr(args, "peso_minimo_biomassa", 700)
+    peso_min = getattr(args, "peso_minimo_biomassa", 750)
     peso_max = getattr(args, "peso_maximo_biomassa", 0)
+    
+    semanas = getattr(args, "semanas_no_mes", 4)
+    carga_min = getattr(args, "capacidade_carga_a_ton", 7.0) * 1000.0
+    carga_max = getattr(args, "capacidade_carga_b_ton", 10.0) * 1000.0
+    tolerancia_pct = getattr(args, "margem_tolerancia_carga", 5.0)
 
     if caminho_biomassa_alvo.exists():
         import biomassa_alvo_processor
         import pandas as pd
         biomassa_alvo_df = pd.read_csv(caminho_biomassa_alvo, sep=';', encoding='utf-8-sig', dtype=str)
         
-        df_tanques_disponiveis = biomassa_alvo_processor.processar_biomassa_alvo(
-            resultado, biomassa_alvo_df, peso_min, peso_max
+        plano = biomassa_alvo_processor.executar_planejamento_despesca(
+            resultado,
+            biomassa_alvo_df,
+            peso_minimo=peso_min,
+            peso_maximo=peso_max if peso_max > 0 else None,
+            semanas=semanas,
+            carga_min=carga_min,
+            carga_max=carga_max,
+            tolerancia_pct=tolerancia_pct,
         )
-        if not df_tanques_disponiveis.empty:
-            alocacoes, deficits = biomassa_alvo_processor.alocar_biomassa(
-                df_tanques_disponiveis, biomassa_alvo_df
-            )
-            cargas = biomassa_alvo_processor.empacotar_cargas(alocacoes, semanas=4)
-            resultado = biomassa_alvo_processor.aplicar_despesca_no_relatorio(resultado, cargas)
-            
-            # --- Relatórios de Auditoria e Sobras/Faltas ---
+        
+        resultado = plano["relatorio"]
+        
+        if plano["cargas"]:
+            # ---- Log de Auditoria ----
             output_path_obj = Path(args.output)
             if not output_path_obj.is_absolute():
                 output_path_obj = resolve_runtime_path(output_path_obj)
+                
+            log_dir = output_path_obj.parent / "log_auditoria"
+            log_dir.mkdir(parents=True, exist_ok=True)
             
-            auditoria_dir = output_path_obj.parent / "log_auditoria"
-            auditoria_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Auditoria Cargas
             df_cargas = []
-            for c in cargas:
-                for comp in c['Composicao']:
-                    row = {
-                        'Mes': c['Mes'],
-                        'Semana': c['Semana'],
-                        'Produtor_Destino': c['Produtor_Destino'],
-                        'Tamanho_Carga_kg': c['Tamanho_Carga_kg'],
-                        'Produtor_Origem': comp['Produtor_Origem'],
-                        'Tanque': comp['Tanque'],
-                        'Volume_kg': comp['Volume_kg'],
-                        'Peso_Medio_g': comp['Peso_Medio_g'],
-                        'Data_Snapshot': comp['Data_Snapshot']
-                    }
-                    df_cargas.append(row)
-            pd.DataFrame(df_cargas).to_csv(auditoria_dir / "log_cargas_auditoria.csv", sep=';', index=False, encoding='utf-8-sig')
+            for c in plano["cargas"]:
+                for f in c.fracoes:
+                    df_cargas.append({
+                        'Mes': c.mes,
+                        'Semana': c.semana,
+                        'Produtor_Destino': c.produtor_destino,
+                        'Tamanho_Carga_kg': c.volume_kg,
+                        'Produtor_Origem': f.produtor_origem,
+                        'Tanque': f.tanque,
+                        'Volume_kg': f.volume_kg,
+                        'Peso_Medio_g': f.peso_medio_g,
+                        'Data_Snapshot': f.data_snapshot
+                    })
             
-            # Auditoria Déficits
-            pd.DataFrame(deficits).to_csv(auditoria_dir / "log_deficits.csv", sep=';', index=False, encoding='utf-8-sig')
+            pd.DataFrame(df_cargas).to_csv(log_dir / "log_cargas_auditoria.csv", sep=';', index=False, encoding='utf-8-sig', decimal=',', float_format='%.3f')
+            pd.DataFrame(plano["deficits"]).to_csv(log_dir / "log_deficits.csv", sep=';', index=False, encoding='utf-8-sig', decimal=',', float_format='%.3f')
             
-            # Sobras e Faltas
-            df_sobras = biomassa_alvo_processor.gerar_relatorio_sobras_faltas(df_tanques_disponiveis, biomassa_alvo_df, cargas)
-            df_sobras.to_csv(auditoria_dir / "sobras_faltas.csv", sep=';', index=False, encoding='utf-8-sig')
+            df_sobras, df_detalhes = biomassa_alvo_processor.gerar_relatorio_sobras_faltas(
+                plano["tanques_disponiveis"], biomassa_alvo_df, plano["alocacoes"]
+            )
+            df_sobras.to_csv(log_dir / "sobras_faltas.csv", sep=';', index=False, encoding='utf-8-sig', decimal=',', float_format='%.3f')
+            df_detalhes.to_csv(log_dir / "detalhe_sobras_faltas.csv", sep=';', index=False, encoding='utf-8-sig', decimal=',', float_format='%.3f')
+            
+            # Print de alertas se houver
+            if plano["alertas"]:
+                print("Alertas de Fechamento de Carga:")
+                for a in plano["alertas"]:
+                    print(a)
     # -----------------------------------------------------
 
     resultado = adicionar_custos_racao(resultado, racao, data_relatorio)

@@ -35,7 +35,13 @@ for import_dir in (SRC_DIR, APP_DIR, MATH_DIR):
 from calculos_saldo import calcular_saldo_acumulado_mes  # type: ignore
 import calculos_movimentacao  # type: ignore
 from calculos_esperado_realizado import process_esperado_realizado  # type: ignore
-from theme_config import PatternName, is_display_numeric_value, normalize_label, style_dark_regional_report
+from theme_config import (
+    PatternName, 
+    is_display_numeric_value, 
+    normalize_label, 
+    style_dark_regional_report,
+    style_sobras_faltas_dataframe
+)
 from theme_consolidado import style_consolidado_dataframe
 from theme_esperado_realizado import style_esperado_realizado_dataframe
 
@@ -133,6 +139,10 @@ class SimulationConfig:
     mostrar_erros: bool
     peso_minimo_biomassa: float
     peso_maximo_biomassa: float
+    semanas_no_mes: int
+    capacidade_carga_a_ton: float
+    capacidade_carga_b_ton: float
+    margem_tolerancia_carga: float
 
 @dataclass(frozen=True)
 class ReportArtifact:
@@ -514,7 +524,7 @@ def parse_terceiros_e_transferencias(csv_bytes: bytes | None) -> pd.DataFrame:
     if not csv_bytes:
         return empty_terceiros_transferencias_frame()
 
-    raw = pd.read_csv(io.BytesIO(csv_bytes), sep=';', encoding='utf-8-sig', dtype=str).fillna("")
+    raw = pd.read_csv(io.BytesIO(csv_bytes), sep=';', encoding='utf-8-sig', dtype=str).replace(["None", "nan", "NaN"], "").fillna("")
     if "Mês" not in raw.columns and "Data" in raw.columns:
         raw = raw.rename(columns={"Data": "Mês"})
     for coluna in TERCEIROS_TRANSFERENCIAS_COLUMNS:
@@ -562,7 +572,7 @@ def parse_parametros_gerenciais(csv_bytes: bytes, data_inicio: date, num_meses: 
     if not csv_bytes:
         return empty_management_frames()
 
-    raw = pd.read_csv(io.BytesIO(csv_bytes), sep=';', encoding='utf-8-sig', dtype=str).fillna("")
+    raw = pd.read_csv(io.BytesIO(csv_bytes), sep=';', encoding='utf-8-sig', dtype=str).replace(["None", "nan", "NaN"], "").fillna("")
     parametros = preparar_parametros_gerenciais(raw)
 
     metas = parametros["metas"].copy()
@@ -1573,14 +1583,36 @@ def render_management_inputs(
     )
     st.session_state["base_calculo"] = base_calculo
 
-    if base_calculo == "Biomassa Alvo":
-        col_min, col_max = st.columns(2)
-        with col_min:
-            peso_minimo = st.number_input("Peso Mínimo da Faixa (g)", min_value=0, step=50, value=st.session_state.get("peso_minimo_biomassa", 700), key=f"{key_prefix}_peso_minimo")
-        with col_max:
-            peso_maximo = st.number_input("Peso Máximo da Faixa (g)", min_value=0, step=50, value=st.session_state.get("peso_maximo_biomassa", 1100), key=f"{key_prefix}_peso_maximo")
+    with st.expander("⚙️ Parâmetros da Simulação", expanded=(base_calculo == "Biomassa Alvo")):
+        col_p1, col_p2, col_p3 = st.columns(3)
+        with col_p1:
+            peso_minimo = st.number_input("Peso mínimo para despesca (g)", min_value=0, step=50, value=st.session_state.get("peso_minimo_biomassa", 750), key=f"{key_prefix}_peso_minimo")
+            semanas = st.number_input("Qtd de semanas no mês", min_value=1, step=1, value=st.session_state.get("semanas_no_mes", 4), key=f"{key_prefix}_semanas")
+        with col_p2:
+            carga_a = st.number_input("Capacidade da carga A (ton)", min_value=1.0, step=1.0, value=st.session_state.get("capacidade_carga_a_ton", 7.0), key=f"{key_prefix}_carga_a")
+            carga_b = st.number_input("Capacidade da carga B (ton)", min_value=1.0, step=1.0, value=st.session_state.get("capacidade_carga_b_ton", 10.0), key=f"{key_prefix}_carga_b")
+        with col_p3:
+            tolerancia = st.number_input("Margem de tolerância da carga (%)", min_value=0.0, step=1.0, value=st.session_state.get("margem_tolerancia_carga", 5.0), key=f"{key_prefix}_tolerancia")
+            
         st.session_state["peso_minimo_biomassa"] = peso_minimo
-        st.session_state["peso_maximo_biomassa"] = peso_maximo
+        st.session_state["semanas_no_mes"] = semanas
+        st.session_state["capacidade_carga_a_ton"] = carga_a
+        st.session_state["capacidade_carga_b_ton"] = carga_b
+        st.session_state["margem_tolerancia_carga"] = tolerancia
+
+        # AUTO-SAVE Config
+        if "loaded_input_dir" in st.session_state and st.session_state["loaded_input_dir"]:
+            try:
+                cfg_path = st.session_state["loaded_input_dir"] / "config_simulacao.csv"
+                pd.DataFrame([{
+                    "peso_minimo_biomassa": peso_minimo,
+                    "semanas_no_mes": semanas,
+                    "capacidade_carga_a_ton": carga_a,
+                    "capacidade_carga_b_ton": carga_b,
+                    "margem_tolerancia_carga": tolerancia,
+                }]).to_csv(cfg_path, sep=';', index=False, encoding='utf-8-sig')
+            except Exception:
+                pass
 
     def render_tabela_peso_medio(index: int, disabled: bool) -> pd.DataFrame:
         st.markdown(f"#### {index}. Peso Médio Alvo por Produtor", help="Configure o peso de despesca esperado para cada produtor. O simulador só classificará os lotes como 'Peixe Pronto' quando o peso médio de cultivo ultrapassar o alvo definido aqui para aquele produtor naquele mês.")
@@ -1677,10 +1709,6 @@ def render_management_inputs(
         meses_visiveis = meses
 
     df_transferencias_editado = limpar_origem_terceiros(df_transferencias_editado)
-    st.session_state["df_metas"] = df_metas_editado.copy()
-    st.session_state["df_terceiros"] = df_transferencias_editado.copy()
-    st.session_state["peso_medio_overrides"] = df_peso_medio_editado.copy()
-    st.session_state["biomassa_alvo"] = df_biomassa_alvo_editado.copy()
     st.session_state["meses_visiveis"] = list(meses_visiveis)
     
     parametros_csv = parametros_gerenciais_to_csv(df_metas_editado, pd.DataFrame(columns=TERCEIROS_COLUMNS))
@@ -2122,17 +2150,93 @@ def render_excel_style_view(csv_bytes: bytes) -> None:
     with tab_sobras:
         st.markdown("### 📦 Sobras x Faltas de Biomassa")
         st.caption("Visão do que foi disponibilizado, recebido e as respectivas sobras no tanque ou faltas de cumprimento da meta (mês a mês).")
+        st.info("💡 **Dica:** Selecione uma linha na tabela abaixo para detalhar a composição dos tanques.")
+        
         last_artifact = st.session_state.get("last_artifact")
         if last_artifact and last_artifact.output_path:
-            sf_path = Path(last_artifact.output_path).parent / "log_auditoria" / "sobras_faltas.csv"
-            if sf_path.exists():
+            log_dir = Path(last_artifact.output_path).parent / "log_auditoria"
+            sf_path = log_dir / "sobras_faltas.csv"
+            detalhe_path = log_dir / "detalhe_sobras_faltas.csv"
+            
+            if sf_path.exists() and detalhe_path.exists():
                 df_sf = pd.read_csv(sf_path, sep=';', encoding='utf-8-sig')
+                df_detalhe = pd.read_csv(detalhe_path, sep=';', encoding='utf-8-sig')
+                df_sf = pd.read_csv(sf_path, sep=';', encoding='utf-8-sig', decimal=',')
+                df_detalhe = pd.read_csv(detalhe_path, sep=';', encoding='utf-8-sig', decimal=',')
+                
                 if not df_sf.empty:
-                    st.dataframe(df_sf, use_container_width=True, hide_index=True)
+                    # Render the interactive dataframe
+                    event = st.dataframe(
+                        style_sobras_faltas_dataframe(df_sf),
+                        use_container_width=True, 
+                        hide_index=True,
+                        selection_mode="single-row",
+                        on_select="rerun"
+                    )
+                    
+                    selected_rows = event.selection.rows
+                    if selected_rows:
+                        row_idx = selected_rows[0]
+                        selected_mes = df_sf.iloc[row_idx]["Mês"]
+                        selected_produtor = df_sf.iloc[row_idx]["Produtor"]
+                        
+                        st.markdown(f"#### 🔍 Detalhamento — {selected_mes} | {selected_produtor}")
+                        
+                        # Filter details
+                        df_d = df_detalhe[(df_detalhe["Mês"] == selected_mes) & (df_detalhe["Produtor de Origem"] == selected_produtor)]
+                        
+                        if df_d.empty:
+                            st.info("Nenhum tanque disponível ou alocado para este produtor no mês selecionado.")
+                        else:
+                            t_disp, t_prop, t_terc, t_tot, t_sob = st.tabs([
+                                "Disponível", "Alocação Própria", "Alocação p/ Terceiros", "Alocação Total", "Sobra de Biomassa Pronta"
+                            ])
+                            
+                            # Common formatting
+                            def _format_detalhe(df_to_style):
+                                # Appends " t" to the numeric columns
+                                def _fmt_t(v):
+                                    try:
+                                        return f"{float(v)/1000:,.1f} t".replace(",", "_").replace(".", ",").replace("_", ".")
+                                    except:
+                                        return v
+                                formatters = {c: _fmt_t for c in df_to_style.columns if c != "Tanque" and c != "Produtor de Destino"}
+                                return df_to_style.style.format(formatters)
+                            
+                            with t_disp:
+                                st.write("Tanques que compõem a biomassa **Disponível** neste mês.")
+                                df_disp = df_d[["Tanque", "Biomassa disponível do tanque"]].drop_duplicates(subset=["Tanque"])
+                                st.dataframe(_format_detalhe(df_disp), use_container_width=True, hide_index=True)
+                                st.caption(f"**Soma:** {df_disp['Biomassa disponível do tanque'].sum() / 1000:,.1f} t".replace(",", "_").replace(".", ",").replace("_", "."))
+                                
+                            with t_prop:
+                                st.write("Tanques alocados para o **próprio produtor**.")
+                                df_prop = df_d[df_d["Biomassa alocada para o próprio produtor"] > 0][["Tanque", "Biomassa alocada para o próprio produtor"]]
+                                st.dataframe(_format_detalhe(df_prop), use_container_width=True, hide_index=True)
+                                st.caption(f"**Soma:** {df_prop['Biomassa alocada para o próprio produtor'].sum() / 1000:,.1f} t".replace(",", "_").replace(".", ",").replace("_", "."))
+                                
+                            with t_terc:
+                                st.write("Tanques alocados para **terceiros**.")
+                                df_terc = df_d[df_d["Biomassa alocada para terceiros"] > 0][["Tanque", "Produtor de Destino", "Biomassa alocada para terceiros"]]
+                                st.dataframe(_format_detalhe(df_terc), use_container_width=True, hide_index=True)
+                                st.caption(f"**Soma:** {df_terc['Biomassa alocada para terceiros'].sum() / 1000:,.1f} t".replace(",", "_").replace(".", ",").replace("_", "."))
+                                
+                            with t_tot:
+                                st.write("Todos os tanques utilizados na **Alocação Total**.")
+                                df_tot = df_d[df_d["Alocação Total do tanque"] > 0][["Tanque", "Biomassa alocada para o próprio produtor", "Biomassa alocada para terceiros", "Alocação Total do tanque"]]
+                                st.dataframe(_format_detalhe(df_tot), use_container_width=True, hide_index=True)
+                                st.caption(f"**Soma:** {df_tot['Alocação Total do tanque'].sum() / 1000:,.1f} t".replace(",", "_").replace(".", ",").replace("_", "."))
+                                
+                            with t_sob:
+                                st.write("Tanques com **Sobra de Biomassa Pronta** após as alocações.")
+                                df_sob = df_d[df_d["Biomassa restante/sobra do tanque"] > 0][["Tanque", "Biomassa restante/sobra do tanque"]].drop_duplicates(subset=["Tanque"])
+                                st.dataframe(_format_detalhe(df_sob), use_container_width=True, hide_index=True)
+                                st.caption(f"**Soma:** {df_sob['Biomassa restante/sobra do tanque'].sum() / 1000:,.1f} t".replace(",", "_").replace(".", ",").replace("_", "."))
+                            
                 else:
                     st.info("Nenhum desvio ou interação registrado.")
             else:
-                st.info("Log de sobras/faltas não encontrado. Pode ser que a simulação rodou sem metas.")
+                st.info("Log de sobras/faltas ou detalhamento não encontrado. Pode ser que a simulação rodou sem metas.")
         else:
             st.info("Rode a simulação primeiro.")
 
@@ -2180,7 +2284,8 @@ def carregar_peso_medio_overrides_de_caminho(caminho: Path) -> pd.DataFrame:
     if not caminho.exists():
         return pd.DataFrame()
     try:
-        df = pd.read_csv(caminho, sep=";", encoding="utf-8-sig", dtype=str).fillna("")
+        df = pd.read_csv(caminho, sep=";", encoding="utf-8-sig", dtype=str)
+        df = df.replace(["None", "nan", "NaN"], "").fillna("")
         if "Produtor" not in df.columns:
             return pd.DataFrame()
         return df
@@ -2210,7 +2315,8 @@ def carregar_biomassa_alvo_de_caminho(caminho: Path) -> pd.DataFrame:
     if not caminho.exists():
         return pd.DataFrame()
     try:
-        df = pd.read_csv(caminho, sep=";", encoding="utf-8-sig", dtype=str).fillna("")
+        df = pd.read_csv(caminho, sep=";", encoding="utf-8-sig", dtype=str)
+        df = df.replace(["None", "nan", "NaN"], "").fillna("")
         if "Produtor" not in df.columns:
             return pd.DataFrame()
         return df
@@ -2252,7 +2358,7 @@ def main() -> None:
         st.session_state["peso_minimo_biomassa"] = 700
         
     if "peso_maximo_biomassa" not in st.session_state:
-        st.session_state["peso_maximo_biomassa"] = 1100
+        st.session_state["peso_maximo_biomassa"] = 0
 
     configure_page()
     render_header()
@@ -2373,8 +2479,12 @@ def main() -> None:
                             terceiros_e_transferencias=REQUIRED_FILES["terceiros_e_transferencias"],
                             output=output_name,
                             data_relatorio=data_relatorio, mostrar_erros=mostrar_erros,
-                            peso_minimo_biomassa=st.session_state.get("peso_minimo_biomassa", 700),
-                            peso_maximo_biomassa=st.session_state.get("peso_maximo_biomassa", 0),
+                            peso_minimo_biomassa=st.session_state.get("peso_minimo_biomassa", 750),
+                            peso_maximo_biomassa=0.0,
+                            semanas_no_mes=st.session_state.get("semanas_no_mes", 4),
+                            capacidade_carga_a_ton=st.session_state.get("capacidade_carga_a_ton", 7.0),
+                            capacidade_carga_b_ton=st.session_state.get("capacidade_carga_b_ton", 10.0),
+                            margem_tolerancia_carga=st.session_state.get("margem_tolerancia_carga", 5.0),
                         )
                         with st.spinner("Motor de Cálculo em Execução..."):
                             out_path, stdout = run_simulation(config)
@@ -2393,6 +2503,22 @@ def main() -> None:
         input_dir = raw_input_dir if raw_input_dir.is_absolute() else RUNTIME_DIR / raw_input_dir
         if "loaded_input_dir" not in st.session_state or st.session_state["loaded_input_dir"] != input_dir:
             st.session_state["loaded_input_dir"] = input_dir
+            
+            # Load config_simulacao.csv if it exists
+            local_config_path = input_dir / "config_simulacao.csv"
+            if local_config_path.exists():
+                try:
+                    df_cfg = pd.read_csv(local_config_path, sep=';', encoding='utf-8-sig')
+                    if not df_cfg.empty:
+                        row = df_cfg.iloc[0]
+                        st.session_state["peso_minimo_biomassa"] = int(float(row.get("peso_minimo_biomassa", 750)))
+                        st.session_state["semanas_no_mes"] = int(float(row.get("semanas_no_mes", 4)))
+                        st.session_state["capacidade_carga_a_ton"] = float(row.get("capacidade_carga_a_ton", 7.0))
+                        st.session_state["capacidade_carga_b_ton"] = float(row.get("capacidade_carga_b_ton", 10.0))
+                        st.session_state["margem_tolerancia_carga"] = float(row.get("margem_tolerancia_carga", 5.0))
+                except Exception:
+                    pass
+                    
             local_peso_medio_path = input_dir / "peso_medio_produtor.csv"
             if local_peso_medio_path.exists():
                 st.session_state["peso_medio_overrides"] = carregar_peso_medio_overrides_de_caminho(local_peso_medio_path)
@@ -2449,36 +2575,56 @@ def main() -> None:
             st.button("🚀 Executar Simulação Local", disabled=True, key="btn_local_disabled")
         elif st.button("🚀 Executar Simulação Local", type="primary", key="btn_local_run"):
             df_metas, df_terceiros, df_peso_medio, df_biomassa_alvo, meses_visiveis = management_state
-            config = SimulationConfig(
-                input_dir=input_dir, plantel=REQUIRED_FILES["plantel"],
-                tanques=REQUIRED_FILES["tanques"], curvas=REQUIRED_FILES["curvas"],
-                racao=REQUIRED_FILES["racao"],
-                parametros_gerenciais=REQUIRED_FILES["parametros_gerenciais"],
-                terceiros_e_transferencias=REQUIRED_FILES["terceiros_e_transferencias"],
-                output=output_name,
-                data_relatorio=data_relatorio, mostrar_erros=mostrar_erros,
-                peso_minimo_biomassa=st.session_state.get("peso_minimo_biomassa", 700),
-                peso_maximo_biomassa=st.session_state.get("peso_maximo_biomassa", 0),
-            )
             try:
-                input_dir.mkdir(parents=True, exist_ok=True)
-                (input_dir / PARAMETROS_FILE).write_bytes(
-                    parametros_gerenciais_to_csv(df_metas, pd.DataFrame(columns=TERCEIROS_COLUMNS))
-                )
-                (input_dir / TERCEIROS_TRANSFERENCIAS_FILE).write_bytes(
-                    terceiros_e_transferencias_to_csv(df_terceiros)
-                )
-                if df_peso_medio is not None:
-                    (input_dir / "peso_medio_produtor.csv").write_bytes(
-                        peso_medio_overrides_to_csv(df_peso_medio, meses_visiveis or df_metas["Mês"].tolist())
+                import tempfile
+                import shutil
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    work_dir = Path(tmp_dir)
+                    # Copia todos os arquivos do diretório local para o diretório temporário
+                    for f in input_dir.glob("*.csv"):
+                        shutil.copy(f, work_dir)
+                        
+                    # Sobrescreve com o estado atual da interface
+                    (work_dir / PARAMETROS_FILE).write_bytes(
+                        parametros_gerenciais_to_csv(df_metas, pd.DataFrame(columns=TERCEIROS_COLUMNS))
+                    )
+                    (work_dir / TERCEIROS_TRANSFERENCIAS_FILE).write_bytes(
+                        terceiros_e_transferencias_to_csv(df_terceiros)
+                    )
+                    if df_peso_medio is not None:
+                        (work_dir / "peso_medio_produtor.csv").write_bytes(
+                            peso_medio_overrides_to_csv(df_peso_medio, meses_visiveis or df_metas["Mês"].tolist())
+                        )
+                    if df_biomassa_alvo is not None:
+                        (work_dir / "biomassa_alvo.csv").write_bytes(
+                            biomassa_alvo_to_csv(df_biomassa_alvo, meses_visiveis or df_metas["Mês"].tolist())
+                        )
+                        
+                    # Atualiza o config para apontar para o diretório temporário
+                    config = SimulationConfig(
+                        input_dir=work_dir, plantel=REQUIRED_FILES["plantel"],
+                        tanques=REQUIRED_FILES["tanques"], curvas=REQUIRED_FILES["curvas"],
+                        racao=REQUIRED_FILES["racao"],
+                        parametros_gerenciais=REQUIRED_FILES["parametros_gerenciais"],
+                        terceiros_e_transferencias=REQUIRED_FILES["terceiros_e_transferencias"],
+                        output=output_name,
+                        data_relatorio=data_relatorio, mostrar_erros=mostrar_erros,
+                        peso_minimo_biomassa=st.session_state.get("peso_minimo_biomassa", 750),
+                        peso_maximo_biomassa=0.0,
+                        semanas_no_mes=st.session_state.get("semanas_no_mes", 4),
+                        capacidade_carga_a_ton=st.session_state.get("capacidade_carga_a_ton", 7.0),
+                        capacidade_carga_b_ton=st.session_state.get("capacidade_carga_b_ton", 10.0),
+                        margem_tolerancia_carga=st.session_state.get("margem_tolerancia_carga", 5.0),
                     )
 
-                with st.spinner("Motor de Cálculo em Execução..."):
-                    out_path, stdout = run_simulation(config)
+                    with st.spinner("Motor de Cálculo em Execução..."):
+                        out_path, stdout = run_simulation(config)
+                        out_bytes = out_path.read_bytes()
+                        
                 st.session_state["df_metas"] = df_metas
                 st.session_state["df_terceiros"] = df_terceiros
                 st.session_state["meses_visiveis"] = meses_visiveis
-                st.session_state["last_artifact"] = ReportArtifact(out_path.name, out_path.read_bytes(), stdout, str(out_path))
+                st.session_state["last_artifact"] = ReportArtifact(out_path.name, out_bytes, stdout, str(out_path))
             except Exception as e:
                 st.error(f"Falha Crítica na Execução: {e}")
 
